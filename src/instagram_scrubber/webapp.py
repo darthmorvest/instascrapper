@@ -621,6 +621,17 @@ def _sanitize_business_account_id(raw: str) -> str:
     return value
 
 
+def _is_placeholder_credential(value: str) -> bool:
+    cleaned = value.strip().strip("\"").strip("'").lower()
+    return cleaned in {
+        "",
+        "replace_me",
+        "changeme",
+        "your_token_here",
+        "your_business_account_id",
+    }
+
+
 def _extract_error_code(text: str) -> int | None:
     match = re.search(r"[\"']code[\"']\s*:\s*(\d+)", text)
     if match:
@@ -746,7 +757,10 @@ def _bootstrap_profile_from_env_if_missing() -> None:
 
     access_token = _sanitize_access_token(os.getenv("IG_ACCESS_TOKEN", ""))
     business_account_id = _sanitize_business_account_id(os.getenv("IG_BUSINESS_ACCOUNT_ID", ""))
-    if not access_token or not business_account_id:
+    if (
+        _is_placeholder_credential(access_token)
+        or _is_placeholder_credential(business_account_id)
+    ):
         return
 
     upsert_active_profile(
@@ -841,6 +855,16 @@ def create_app() -> Flask:
                 raise ValueError("Instagram Business Account ID is required")
             if not form["access_token"]:
                 raise ValueError("Instagram access token is required")
+            if _is_placeholder_credential(form["access_token"]):
+                raise ValueError(
+                    "Access token is still a placeholder (replace_me). "
+                    "Paste your real Instagram access token."
+                )
+            if _is_placeholder_credential(form["business_account_id"]):
+                raise ValueError(
+                    "Business Account ID is still a placeholder (replace_me). "
+                    "Paste the numeric Instagram Business Account ID."
+                )
             if not form["business_account_id"].isdigit():
                 raise ValueError(
                     "Instagram Business Account ID must be numeric only (example: 1784...). "
