@@ -47,7 +47,7 @@ cp .env.example .env
 ig-scrubber --output leads.csv --media-limit 30 --comments-per-media 200 --lookback-days 120
 ```
 
-## Web app mode
+## Web app mode (simple flow)
 
 Start the web app:
 
@@ -56,17 +56,19 @@ source .venv/bin/activate
 ig-scrubber-web
 ```
 
-Then open:
+Open:
 
 - `http://localhost:8080`
 
-The app will:
+How it works:
 
-- Let you create and save multiple scrub profiles (per client/account)
-- Let you run a scrub from the browser using any saved profile
-- Keep run history in app storage
-- Save CSV files in `outputs/`
-- Let you download any recent CSV from the UI
+1. Complete **One-Time Setup** (`account id + access token`)
+2. Click **Run Report Now** any time you want fresh leads
+3. Download current/old reports from **Report History**
+
+Defaults can be changed under **Edit Setup**.
+
+If `IG_ACCESS_TOKEN` and `IG_BUSINESS_ACCOUNT_ID` are set in environment variables, the app auto-bootstraps setup on startup.
 
 ## Deploy on a subdomain
 
@@ -146,7 +148,7 @@ This app uses SQLite by default:
 - Local/VPS: persistent at `data/instagram_scrubber.db`
 - Vercel: stored in `/tmp` (ephemeral), so profiles and run history are not guaranteed to persist
 
-For durable production data, run this on a VPS/Render/Railway or switch storage to a managed database.
+For durable one-time setup + old report history, run this on VPS/Render/Railway or switch storage to a managed database.
 
 ## Required environment variables
 

@@ -124,6 +124,35 @@ def get_profile(profile_id: int) -> dict[str, Any] | None:
     return _row_to_dict(row)
 
 
+def get_active_profile() -> dict[str, Any] | None:
+    with _connect() as conn:
+        row = conn.execute(
+            """
+            SELECT
+              id,
+              name,
+              access_token,
+              business_account_id,
+              graph_version,
+              timeout_seconds,
+              retry_count,
+              retry_backoff_seconds,
+              default_media_limit,
+              default_comments_per_media,
+              default_lookback_days,
+              default_max_profiles,
+              created_at,
+              updated_at
+            FROM profiles
+            ORDER BY updated_at DESC, id DESC
+            LIMIT 1
+            """
+        ).fetchone()
+    if row is None:
+        return None
+    return _row_to_dict(row)
+
+
 def create_profile(
     *,
     name: str,
@@ -176,6 +205,105 @@ def create_profile(
             ),
         )
         return int(cursor.lastrowid)
+
+
+def update_profile(
+    *,
+    profile_id: int,
+    name: str,
+    access_token: str,
+    business_account_id: str,
+    graph_version: str,
+    timeout_seconds: int,
+    retry_count: int,
+    retry_backoff_seconds: float,
+    default_media_limit: int,
+    default_comments_per_media: int,
+    default_lookback_days: int,
+    default_max_profiles: int | None,
+) -> None:
+    with _connect() as conn:
+        conn.execute(
+            """
+            UPDATE profiles
+            SET
+              name = ?,
+              access_token = ?,
+              business_account_id = ?,
+              graph_version = ?,
+              timeout_seconds = ?,
+              retry_count = ?,
+              retry_backoff_seconds = ?,
+              default_media_limit = ?,
+              default_comments_per_media = ?,
+              default_lookback_days = ?,
+              default_max_profiles = ?,
+              updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                name.strip(),
+                access_token.strip(),
+                business_account_id.strip(),
+                graph_version.strip() or "v21.0",
+                timeout_seconds,
+                retry_count,
+                retry_backoff_seconds,
+                default_media_limit,
+                default_comments_per_media,
+                default_lookback_days,
+                default_max_profiles,
+                _utc_now_iso(),
+                profile_id,
+            ),
+        )
+
+
+def upsert_active_profile(
+    *,
+    name: str,
+    access_token: str,
+    business_account_id: str,
+    graph_version: str,
+    timeout_seconds: int,
+    retry_count: int,
+    retry_backoff_seconds: float,
+    default_media_limit: int,
+    default_comments_per_media: int,
+    default_lookback_days: int,
+    default_max_profiles: int | None,
+) -> int:
+    active = get_active_profile()
+    if active is None:
+        return create_profile(
+            name=name,
+            access_token=access_token,
+            business_account_id=business_account_id,
+            graph_version=graph_version,
+            timeout_seconds=timeout_seconds,
+            retry_count=retry_count,
+            retry_backoff_seconds=retry_backoff_seconds,
+            default_media_limit=default_media_limit,
+            default_comments_per_media=default_comments_per_media,
+            default_lookback_days=default_lookback_days,
+            default_max_profiles=default_max_profiles,
+        )
+
+    update_profile(
+        profile_id=int(active["id"]),
+        name=name,
+        access_token=access_token,
+        business_account_id=business_account_id,
+        graph_version=graph_version,
+        timeout_seconds=timeout_seconds,
+        retry_count=retry_count,
+        retry_backoff_seconds=retry_backoff_seconds,
+        default_media_limit=default_media_limit,
+        default_comments_per_media=default_comments_per_media,
+        default_lookback_days=default_lookback_days,
+        default_max_profiles=default_max_profiles,
+    )
+    return int(active["id"])
 
 
 def delete_profile(profile_id: int) -> None:
@@ -274,4 +402,3 @@ def list_runs(limit: int = 50) -> list[dict[str, Any]]:
             (limit,),
         ).fetchall()
     return [_row_to_dict(row) for row in rows]
-
