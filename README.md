@@ -62,7 +62,9 @@ Then open:
 
 The app will:
 
-- Let you run a scrub from the browser
+- Let you create and save multiple scrub profiles (per client/account)
+- Let you run a scrub from the browser using any saved profile
+- Keep run history in app storage
 - Save CSV files in `outputs/`
 - Let you download any recent CSV from the UI
 
@@ -121,7 +123,7 @@ git push -u origin main
 
 #### 3) Set Environment Variables in Vercel
 
-Add these to Project Settings -> Environment Variables:
+Optional for CLI-only workflows. Web profile mode stores credentials in app storage:
 
 - `IG_ACCESS_TOKEN`
 - `IG_BUSINESS_ACCOUNT_ID`
@@ -137,7 +139,18 @@ Add these to Project Settings -> Environment Variables:
 3. Add `scrubber.yourdomain.com`
 4. Create DNS CNAME record pointing your subdomain to Vercel target shown in UI
 
+#### Important persistence note on Vercel
+
+This app uses SQLite by default:
+
+- Local/VPS: persistent at `data/instagram_scrubber.db`
+- Vercel: stored in `/tmp` (ephemeral), so profiles and run history are not guaranteed to persist
+
+For durable production data, run this on a VPS/Render/Railway or switch storage to a managed database.
+
 ## Required environment variables
+
+Required for CLI mode:
 
 - `IG_ACCESS_TOKEN`: Long-lived user/system token with required IG permissions
 - `IG_BUSINESS_ACCOUNT_ID`: Instagram Business Account ID (numeric)
