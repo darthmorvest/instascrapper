@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+import sqlite3
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -14,14 +15,16 @@ from .exporters import write_csv
 from .instagram_api import InstagramGraphClient
 from .pipeline import build_leads
 from .storage import (
+    create_profile,
     create_run,
     db_path,
+    delete_profile,
     finish_run_failure,
     finish_run_success,
-    get_active_profile,
+    get_profile,
     init_db,
+    list_profiles,
     list_runs,
-    upsert_active_profile,
 )
 
 if os.getenv("VERCEL") == "1":
@@ -49,7 +52,6 @@ INDEX_HTML = """
       --sub: #4a647a;
       --accent: #0b7285;
       --accent-2: #0f766e;
-      --accent-soft: #e0f4f5;
       --good-bg: #dcfce7;
       --good-line: #86efac;
       --bad-bg: #fff1f2;
@@ -72,7 +74,7 @@ INDEX_HTML = """
     }
 
     .shell {
-      max-width: 1100px;
+      max-width: 1120px;
       margin: 0 auto;
       display: grid;
       gap: 14px;
@@ -93,8 +95,6 @@ INDEX_HTML = """
     }
 
     .hero {
-      position: relative;
-      overflow: hidden;
       background:
         linear-gradient(125deg, rgba(11, 114, 133, 0.07), rgba(15, 118, 110, 0.09) 55%, rgba(255, 255, 255, 0.9)),
         #fff;
@@ -121,6 +121,13 @@ INDEX_HTML = """
       font-size: 1.72rem;
       line-height: 1.22;
       letter-spacing: 0.2px;
+    }
+
+    h2 {
+      margin: 0 0 8px;
+      font-family: "Sora", "Manrope", sans-serif;
+      font-size: 1.04rem;
+      letter-spacing: 0.1px;
     }
 
     .sub {
@@ -169,7 +176,7 @@ INDEX_HTML = """
 
     .stat .value {
       margin-top: 4px;
-      font-size: 1.25rem;
+      font-size: 1.1rem;
       font-weight: 800;
       color: #16344f;
       word-break: break-word;
@@ -193,13 +200,6 @@ INDEX_HTML = """
       background: var(--bad-bg);
       border-color: var(--bad-line);
       color: #881337;
-    }
-
-    h2 {
-      margin: 0 0 8px;
-      font-family: "Sora", "Manrope", sans-serif;
-      font-size: 1.04rem;
-      letter-spacing: 0.1px;
     }
 
     .muted {
@@ -229,13 +229,10 @@ INDEX_HTML = """
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      transition: transform 120ms ease;
     }
 
-    button:hover,
-    .btn:hover { transform: translateY(-1px); }
-
-    .btn.alt {
+    .btn.alt,
+    button.alt {
       background: #fff;
       color: #1f3f60;
       border: 1px solid #bfd7ea;
@@ -256,7 +253,8 @@ INDEX_HTML = """
       font-weight: 600;
     }
 
-    input {
+    input,
+    select {
       width: 100%;
       border: 1px solid var(--line);
       border-radius: 10px;
@@ -355,18 +353,18 @@ INDEX_HTML = """
     <section class="card hero">
       <div class="brand">InstaScrapper Pro</div>
       <h1>Podcast Lead Intelligence Dashboard</h1>
-      <p class="sub">One-time setup. One-click report runs. Clean history for every previous export.</p>
+      <p class="sub">Add one or more Instagram accounts, choose one, set lookback, and run your report.</p>
       <div class="flow">
-        <span>1. Setup</span>
-        <span>2. Run Report</span>
+        <span>1. Add Account</span>
+        <span>2. Choose Account + Lookback</span>
         <span>3. Download from History</span>
       </div>
     </section>
 
     <section class="stats">
       <div class="stat">
-        <div class="label">Workspace</div>
-        <div class="value">{{ profile.name if profile else 'Not configured' }}</div>
+        <div class="label">Accounts</div>
+        <div class="value">{{ stats.account_count }}</div>
       </div>
       <div class="stat">
         <div class="label">Total Runs</div>
@@ -389,32 +387,22 @@ INDEX_HTML = """
       <section class="card"><div class="error">{{ error }}</div></section>
     {% endif %}
 
-    <section class="card">
-      <h2>Setup</h2>
-      {% if profile and not show_setup_form %}
-        <p class="muted">Connected account ID: <strong>{{ profile.business_account_id }}</strong>. Stored defaults will be used for each run.</p>
-        <div class="actions">
-          <form method="post" action="{{ url_for('run_scrub') }}">
-            <button type="submit">Run Report Now</button>
-          </form>
-          <a class="btn alt" href="{{ url_for('index') }}?edit_setup=1">Edit Setup</a>
-        </div>
-      {% endif %}
-
-      {% if show_setup_form %}
-      <form method="post" action="{{ url_for('setup') }}">
+    <section class="card" id="accounts">
+      <h2>Add Instagram Account</h2>
+      <p class="muted">Create a reusable account profile for running reports. You can add multiple clients.</p>
+      <form method="post" action="{{ url_for('create_account') }}">
         <div class="form-grid">
           <div>
-            <label for="name">Workspace Name</label>
-            <input id="name" name="name" value="{{ setup_form.name }}" required />
+            <label for="name">Account label</label>
+            <input id="name" name="name" value="{{ account_form.name }}" placeholder="Family Teams" required />
           </div>
           <div>
             <label for="business_account_id">Instagram Business Account ID (numeric)</label>
-            <input id="business_account_id" name="business_account_id" value="{{ setup_form.business_account_id }}" placeholder="1784..." required />
+            <input id="business_account_id" name="business_account_id" value="{{ account_form.business_account_id }}" placeholder="1784..." required />
           </div>
           <div>
             <label for="access_token">Instagram Access Token</label>
-            <input id="access_token" name="access_token" value="{{ setup_form.access_token }}" placeholder="Paste raw token only" required />
+            <input id="access_token" name="access_token" value="{{ account_form.access_token }}" placeholder="Paste raw token only" required />
           </div>
         </div>
 
@@ -423,47 +411,121 @@ INDEX_HTML = """
           <div class="form-grid">
             <div>
               <label for="graph_version">Graph Version</label>
-              <input id="graph_version" name="graph_version" value="{{ setup_form.graph_version }}" />
+              <input id="graph_version" name="graph_version" value="{{ account_form.graph_version }}" />
             </div>
             <div>
               <label for="timeout_seconds">Timeout Seconds</label>
-              <input id="timeout_seconds" name="timeout_seconds" type="number" min="1" value="{{ setup_form.timeout_seconds }}" />
+              <input id="timeout_seconds" name="timeout_seconds" type="number" min="1" value="{{ account_form.timeout_seconds }}" />
             </div>
             <div>
               <label for="retry_count">Retry Count</label>
-              <input id="retry_count" name="retry_count" type="number" min="0" value="{{ setup_form.retry_count }}" />
+              <input id="retry_count" name="retry_count" type="number" min="0" value="{{ account_form.retry_count }}" />
             </div>
             <div>
               <label for="retry_backoff_seconds">Retry Backoff Seconds</label>
-              <input id="retry_backoff_seconds" name="retry_backoff_seconds" type="number" min="0" step="0.1" value="{{ setup_form.retry_backoff_seconds }}" />
+              <input id="retry_backoff_seconds" name="retry_backoff_seconds" type="number" min="0" step="0.1" value="{{ account_form.retry_backoff_seconds }}" />
             </div>
             <div>
               <label for="default_media_limit">Default Media Limit</label>
-              <input id="default_media_limit" name="default_media_limit" type="number" min="1" value="{{ setup_form.default_media_limit }}" />
+              <input id="default_media_limit" name="default_media_limit" type="number" min="1" value="{{ account_form.default_media_limit }}" />
             </div>
             <div>
               <label for="default_comments_per_media">Default Comments/Media</label>
-              <input id="default_comments_per_media" name="default_comments_per_media" type="number" min="1" value="{{ setup_form.default_comments_per_media }}" />
+              <input id="default_comments_per_media" name="default_comments_per_media" type="number" min="1" value="{{ account_form.default_comments_per_media }}" />
             </div>
             <div>
               <label for="default_lookback_days">Default Lookback Days</label>
-              <input id="default_lookback_days" name="default_lookback_days" type="number" min="1" value="{{ setup_form.default_lookback_days }}" />
+              <input id="default_lookback_days" name="default_lookback_days" type="number" min="1" value="{{ account_form.default_lookback_days }}" />
             </div>
             <div>
               <label for="default_max_profiles">Default Max Profiles (optional)</label>
-              <input id="default_max_profiles" name="default_max_profiles" type="number" min="1" value="{{ setup_form.default_max_profiles }}" />
+              <input id="default_max_profiles" name="default_max_profiles" type="number" min="1" value="{{ account_form.default_max_profiles }}" />
             </div>
           </div>
         </details>
 
         <div class="actions">
-          <button type="submit">Save Setup</button>
-          {% if profile %}
-            <a class="btn alt" href="{{ url_for('index') }}">Cancel</a>
-          {% endif %}
+          <button type="submit">Save Account</button>
         </div>
         <p class="muted">Storage: {{ storage_mode }}</p>
       </form>
+    </section>
+
+    <section class="card" id="run">
+      <h2>Run Report</h2>
+      {% if profiles %}
+        <form method="post" action="{{ url_for('run_scrub') }}">
+          <div class="form-grid">
+            <div>
+              <label for="profile_id">Account</label>
+              <select id="profile_id" name="profile_id" required>
+                {% for p in profiles %}
+                  <option value="{{ p.id }}" {% if p.id == run_form.profile_id %}selected{% endif %}>{{ p.name }} ({{ p.business_account_id }})</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div>
+              <label for="lookback_days">Lookback Days</label>
+              <input id="lookback_days" name="lookback_days" type="number" min="1" value="{{ run_form.lookback_days }}" required />
+            </div>
+          </div>
+
+          <details>
+            <summary>Advanced Run Settings</summary>
+            <div class="form-grid">
+              <div>
+                <label for="media_limit">Media Limit</label>
+                <input id="media_limit" name="media_limit" type="number" min="1" value="{{ run_form.media_limit }}" />
+              </div>
+              <div>
+                <label for="comments_per_media">Comments per Media</label>
+                <input id="comments_per_media" name="comments_per_media" type="number" min="1" value="{{ run_form.comments_per_media }}" />
+              </div>
+              <div>
+                <label for="max_profiles">Max Profiles (optional)</label>
+                <input id="max_profiles" name="max_profiles" type="number" min="1" value="{{ run_form.max_profiles }}" />
+              </div>
+            </div>
+          </details>
+
+          <div class="actions">
+            <button type="submit">Run Report Now</button>
+          </div>
+        </form>
+      {% else %}
+        <p class="muted">Add at least one account above before running reports.</p>
+      {% endif %}
+    </section>
+
+    <section class="card">
+      <h2>Saved Accounts</h2>
+      {% if profiles %}
+      <table>
+        <thead>
+          <tr>
+            <th>Label</th>
+            <th>Business ID</th>
+            <th>Defaults</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for p in profiles %}
+          <tr>
+            <td>{{ p.name }}</td>
+            <td>{{ p.business_account_id }}</td>
+            <td>lookback {{ p.default_lookback_days }}d, media {{ p.default_media_limit }}, comments {{ p.default_comments_per_media }}</td>
+            <td>
+              <form method="post" action="{{ url_for('delete_account', profile_id=p.id) }}" onsubmit="return confirm('Delete this account and related runs?');">
+                <button class="alt" type="submit">Delete</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <p class="muted">No accounts saved yet.</p>
       {% endif %}
     </section>
 
@@ -474,9 +536,10 @@ INDEX_HTML = """
         <thead>
           <tr>
             <th>Run</th>
+            <th>Account</th>
             <th>Started</th>
+            <th>Lookback</th>
             <th>Status</th>
-            <th>Leads</th>
             <th>Report</th>
           </tr>
         </thead>
@@ -484,11 +547,10 @@ INDEX_HTML = """
           {% for run in runs %}
           <tr>
             <td>#{{ run.id }}</td>
+            <td>{{ run.profile_name }}</td>
             <td>{{ run.started_at_display }}</td>
-            <td>
-              <span class="badge {{ run.status }}">{{ run.status }}</span>
-            </td>
-            <td>{{ run.lead_count if run.lead_count is not none else '-' }}</td>
+            <td>{{ run.lookback_days }} days</td>
+            <td><span class="badge {{ run.status }}">{{ run.status }}</span></td>
             <td>
               {% if run.output_filename %}
                 <a href="{{ url_for('download_output', filename=run.output_filename) }}">Download CSV</a>
@@ -503,7 +565,7 @@ INDEX_HTML = """
         </tbody>
       </table>
       {% else %}
-      <p class="muted">No reports yet. Save setup, then click "Run Report Now".</p>
+      <p class="muted">No reports yet.</p>
       {% endif %}
     </section>
 
@@ -589,7 +651,7 @@ def _format_iso(value: str | None) -> str:
 
 
 def _sanitize_access_token(raw: str) -> str:
-    token = raw.strip().strip("\"").strip("'")
+    token = raw.strip().strip('"').strip("'")
     if not token:
         return token
 
@@ -615,14 +677,14 @@ def _sanitize_access_token(raw: str) -> str:
 
 
 def _sanitize_business_account_id(raw: str) -> str:
-    value = raw.strip().strip("\"").strip("'")
+    value = raw.strip().strip('"').strip("'")
     if value.startswith("@"):
         value = value[1:]
     return value
 
 
 def _is_placeholder_credential(value: str) -> bool:
-    cleaned = value.strip().strip("\"").strip("'").lower()
+    cleaned = value.strip().strip('"').strip("'").lower()
     return cleaned in {
         "",
         "replace_me",
@@ -646,7 +708,7 @@ def _friendly_api_error_text(text: str) -> str:
     if code == 190 or "invalid oauth access token" in lowered:
         return (
             "Instagram rejected the access token. Paste only the raw token value "
-            "(no 'Bearer', no quotes, no 'access_token=' prefix), then save setup again."
+            "(no 'Bearer', no quotes, no 'access_token=' prefix), then save account again."
         )
 
     if code in {10, 200} or "permission" in lowered:
@@ -673,7 +735,7 @@ def _validate_setup_credentials(
     if not business_account_id.isdigit():
         raise ValueError(
             "Instagram Business Account ID must be numeric only (example: 1784...). "
-            "Use Workspace Name for text labels like 'FamilyTeams'."
+            "Use Account Label for text names like 'Family Teams'."
         )
 
     base_url = f"https://graph.facebook.com/{graph_version}"
@@ -706,34 +768,19 @@ def _validate_setup_credentials(
         raise ValueError(_friendly_api_error_text(str(account_payload["error"])))
 
 
-def _default_setup_form(profile: dict | None = None) -> dict[str, str]:
-    if profile is None:
-        return {
-            "name": "My Workspace",
-            "business_account_id": "",
-            "access_token": "",
-            "graph_version": "v21.0",
-            "timeout_seconds": "25",
-            "retry_count": "3",
-            "retry_backoff_seconds": "1.5",
-            "default_media_limit": "25",
-            "default_comments_per_media": "200",
-            "default_lookback_days": "90",
-            "default_max_profiles": "",
-        }
-
+def _default_account_form() -> dict[str, str]:
     return {
-        "name": str(profile["name"]),
-        "business_account_id": str(profile["business_account_id"]),
-        "access_token": str(profile["access_token"]),
-        "graph_version": str(profile["graph_version"]),
-        "timeout_seconds": str(profile["timeout_seconds"]),
-        "retry_count": str(profile["retry_count"]),
-        "retry_backoff_seconds": str(profile["retry_backoff_seconds"]),
-        "default_media_limit": str(profile["default_media_limit"]),
-        "default_comments_per_media": str(profile["default_comments_per_media"]),
-        "default_lookback_days": str(profile["default_lookback_days"]),
-        "default_max_profiles": "" if profile["default_max_profiles"] is None else str(profile["default_max_profiles"]),
+        "name": "",
+        "business_account_id": "",
+        "access_token": "",
+        "graph_version": "v21.0",
+        "timeout_seconds": "25",
+        "retry_count": "3",
+        "retry_backoff_seconds": "1.5",
+        "default_media_limit": "25",
+        "default_comments_per_media": "200",
+        "default_lookback_days": "90",
+        "default_max_profiles": "",
     }
 
 
@@ -752,30 +799,49 @@ def _env_float(name: str, default: float) -> float:
 
 
 def _bootstrap_profile_from_env_if_missing() -> None:
-    if get_active_profile() is not None:
+    if list_profiles():
         return
 
     access_token = _sanitize_access_token(os.getenv("IG_ACCESS_TOKEN", ""))
     business_account_id = _sanitize_business_account_id(os.getenv("IG_BUSINESS_ACCOUNT_ID", ""))
-    if (
-        _is_placeholder_credential(access_token)
-        or _is_placeholder_credential(business_account_id)
-    ):
+    if _is_placeholder_credential(access_token) or _is_placeholder_credential(business_account_id):
         return
 
-    upsert_active_profile(
-        name=os.getenv("IG_PROFILE_NAME", "Default Workspace").strip() or "Default Workspace",
-        business_account_id=business_account_id,
-        access_token=access_token,
-        graph_version=os.getenv("IG_GRAPH_VERSION", "v21.0").strip() or "v21.0",
-        timeout_seconds=_env_int("REQUEST_TIMEOUT_SECONDS", 25),
-        retry_count=_env_int("REQUEST_RETRY_COUNT", 3),
-        retry_backoff_seconds=_env_float("REQUEST_RETRY_BACKOFF_SECONDS", 1.5),
-        default_media_limit=_env_int("DEFAULT_MEDIA_LIMIT", 25),
-        default_comments_per_media=_env_int("DEFAULT_COMMENTS_PER_MEDIA", 200),
-        default_lookback_days=_env_int("DEFAULT_LOOKBACK_DAYS", 90),
-        default_max_profiles=_env_int("DEFAULT_MAX_PROFILES", 0) or None,
-    )
+    try:
+        create_profile(
+            name=os.getenv("IG_PROFILE_NAME", "Default Account").strip() or "Default Account",
+            access_token=access_token,
+            business_account_id=business_account_id,
+            graph_version=os.getenv("IG_GRAPH_VERSION", "v21.0").strip() or "v21.0",
+            timeout_seconds=_env_int("REQUEST_TIMEOUT_SECONDS", 25),
+            retry_count=_env_int("REQUEST_RETRY_COUNT", 3),
+            retry_backoff_seconds=_env_float("REQUEST_RETRY_BACKOFF_SECONDS", 1.5),
+            default_media_limit=_env_int("DEFAULT_MEDIA_LIMIT", 25),
+            default_comments_per_media=_env_int("DEFAULT_COMMENTS_PER_MEDIA", 200),
+            default_lookback_days=_env_int("DEFAULT_LOOKBACK_DAYS", 90),
+            default_max_profiles=_env_int("DEFAULT_MAX_PROFILES", 0) or None,
+        )
+    except Exception:
+        return
+
+
+def _default_run_form(selected_profile: dict | None) -> dict[str, str]:
+    if selected_profile is None:
+        return {
+            "profile_id": "",
+            "lookback_days": "90",
+            "media_limit": "25",
+            "comments_per_media": "200",
+            "max_profiles": "",
+        }
+
+    return {
+        "profile_id": str(selected_profile["id"]),
+        "lookback_days": str(selected_profile["default_lookback_days"]),
+        "media_limit": str(selected_profile["default_media_limit"]),
+        "comments_per_media": str(selected_profile["default_comments_per_media"]),
+        "max_profiles": "" if selected_profile["default_max_profiles"] is None else str(selected_profile["default_max_profiles"]),
+    }
 
 
 def _render_page(
@@ -783,16 +849,26 @@ def _render_page(
     message: str | None = None,
     error: str | None = None,
     preview: list | None = None,
-    setup_form: dict[str, str] | None = None,
-    show_setup_form: bool | None = None,
+    account_form: dict[str, str] | None = None,
+    run_form: dict[str, str] | None = None,
+    selected_profile_id: int | None = None,
 ):
-    profile = get_active_profile()
+    profiles = list_profiles()
+    profile_by_id = {int(p["id"]): p for p in profiles}
+
+    selected_profile = None
+    if selected_profile_id is not None and selected_profile_id in profile_by_id:
+        selected_profile = profile_by_id[selected_profile_id]
+    elif profiles:
+        selected_profile = profiles[0]
+
     runs = list_runs(limit=50)
     runs_view = []
     for run in runs:
         item = dict(run)
-        item["started_at_display"] = _format_iso(run.get("started_at"))
-        if run.get("status") not in {"success", "failed", "running"}:
+        item["started_at_display"] = _format_iso(item.get("started_at"))
+        status = item.get("status")
+        if status not in {"success", "failed", "running"}:
             item["status"] = "running"
         runs_view.append(item)
 
@@ -801,20 +877,26 @@ def _render_page(
     last_success = next((row for row in runs if row.get("status") == "success"), None)
     last_report_at = _format_iso(last_success.get("completed_at")) if last_success else "-"
 
-    effective_show_setup = profile is None if show_setup_form is None else show_setup_form
-    storage_mode = f"ephemeral ({db_path()})" if os.getenv("VERCEL") == "1" else str(db_path())
+    if run_form is None:
+        run_form = _default_run_form(selected_profile)
+    else:
+        run_form = dict(run_form)
+
+    if account_form is None:
+        account_form = _default_account_form()
 
     return render_template_string(
         INDEX_HTML,
-        profile=profile,
+        profiles=profiles,
         runs=runs_view,
         message=message,
         error=error,
         preview=preview,
-        setup_form=setup_form or _default_setup_form(profile),
-        show_setup_form=effective_show_setup,
-        storage_mode=storage_mode,
+        account_form=account_form,
+        run_form=run_form,
+        storage_mode=f"ephemeral ({db_path()})" if os.getenv("VERCEL") == "1" else str(db_path()),
         stats={
+            "account_count": len(profiles),
             "total_runs": total_runs,
             "success_runs": success_runs,
             "last_report_at": last_report_at,
@@ -829,11 +911,12 @@ def create_app() -> Flask:
 
     @app.get("/")
     def index():
-        edit_setup = request.args.get("edit_setup") == "1"
-        return _render_page(show_setup_form=edit_setup)
+        selected_raw = request.args.get("profile_id", "").strip()
+        selected_profile_id = int(selected_raw) if selected_raw.isdigit() else None
+        return _render_page(selected_profile_id=selected_profile_id)
 
-    @app.post("/setup")
-    def setup():
+    @app.post("/accounts")
+    def create_account():
         form = {
             "name": request.form.get("name", "").strip(),
             "business_account_id": _sanitize_business_account_id(request.form.get("business_account_id", "")),
@@ -850,26 +933,17 @@ def create_app() -> Flask:
 
         try:
             if not form["name"]:
-                raise ValueError("Workspace name is required")
+                raise ValueError("Account label is required")
             if not form["business_account_id"]:
                 raise ValueError("Instagram Business Account ID is required")
             if not form["access_token"]:
                 raise ValueError("Instagram access token is required")
             if _is_placeholder_credential(form["access_token"]):
-                raise ValueError(
-                    "Access token is still a placeholder (replace_me). "
-                    "Paste your real Instagram access token."
-                )
+                raise ValueError("Access token is still a placeholder. Paste a real token.")
             if _is_placeholder_credential(form["business_account_id"]):
-                raise ValueError(
-                    "Business Account ID is still a placeholder (replace_me). "
-                    "Paste the numeric Instagram Business Account ID."
-                )
+                raise ValueError("Business Account ID is still a placeholder. Paste the numeric ID.")
             if not form["business_account_id"].isdigit():
-                raise ValueError(
-                    "Instagram Business Account ID must be numeric only (example: 1784...). "
-                    "Use Workspace Name for labels like 'FamilyTeams'."
-                )
+                raise ValueError("Instagram Business Account ID must be numeric only (example: 1784...).")
 
             _validate_setup_credentials(
                 access_token=form["access_token"],
@@ -877,10 +951,10 @@ def create_app() -> Flask:
                 graph_version=form["graph_version"],
             )
 
-            upsert_active_profile(
+            profile_id = create_profile(
                 name=form["name"],
-                business_account_id=form["business_account_id"],
                 access_token=form["access_token"],
+                business_account_id=form["business_account_id"],
                 graph_version=form["graph_version"],
                 timeout_seconds=_to_int(form["timeout_seconds"], "Timeout seconds", minimum=1),
                 retry_count=_to_int(form["retry_count"], "Retry count", minimum=0),
@@ -894,60 +968,113 @@ def create_app() -> Flask:
                 default_lookback_days=_to_int(form["default_lookback_days"], "Default lookback days", minimum=1),
                 default_max_profiles=_to_optional_int(form["default_max_profiles"], "Default max profiles", minimum=1),
             )
-            return _render_page(message="Setup saved. You can run reports now.", show_setup_form=False)
+
+            return _render_page(
+                message=f"Account <strong>{form['name']}</strong> saved.",
+                account_form=_default_account_form(),
+                selected_profile_id=profile_id,
+            )
+        except sqlite3.IntegrityError:
+            return _render_page(
+                error="An account with this label already exists. Use a different label.",
+                account_form=form,
+            )
         except Exception as err:  # noqa: BLE001
-            return _render_page(error=str(err), setup_form=form, show_setup_form=True)
+            return _render_page(error=str(err), account_form=form)
+
+    @app.post("/accounts/<int:profile_id>/delete")
+    def delete_account(profile_id: int):
+        delete_profile(profile_id)
+        return _render_page(message="Account deleted.")
 
     @app.post("/run")
     def run_scrub():
-        profile = get_active_profile()
-        if profile is None:
-            return _render_page(error="Complete one-time setup first.", show_setup_form=True)
-
-        media_limit = int(profile["default_media_limit"])
-        comments_per_media = int(profile["default_comments_per_media"])
-        lookback_days = int(profile["default_lookback_days"])
-        max_profiles = profile["default_max_profiles"]
-
-        run_id = create_run(
-            profile_id=int(profile["id"]),
-            media_limit=media_limit,
-            comments_per_media=comments_per_media,
-            lookback_days=lookback_days,
-            max_profiles=max_profiles,
-        )
+        form = {
+            "profile_id": request.form.get("profile_id", "").strip(),
+            "lookback_days": request.form.get("lookback_days", "").strip(),
+            "media_limit": request.form.get("media_limit", "").strip(),
+            "comments_per_media": request.form.get("comments_per_media", "").strip(),
+            "max_profiles": request.form.get("max_profiles", "").strip(),
+        }
 
         try:
-            settings = build_settings(
-                access_token=str(profile["access_token"]),
-                business_account_id=str(profile["business_account_id"]),
-                graph_version=str(profile["graph_version"]),
-                timeout_seconds=int(profile["timeout_seconds"]),
-                retry_count=int(profile["retry_count"]),
-                retry_backoff_seconds=float(profile["retry_backoff_seconds"]),
-            )
-            client = InstagramGraphClient(settings)
-            records = build_leads(
-                client=client,
+            if not form["profile_id"].isdigit():
+                raise ValueError("Select an account before running the report.")
+            profile_id = int(form["profile_id"])
+            profile = get_profile(profile_id)
+            if profile is None:
+                raise ValueError("Selected account was not found. Please pick another account.")
+
+            lookback_days = _to_optional_int(form["lookback_days"], "Lookback days", minimum=1)
+            if lookback_days is None:
+                lookback_days = int(profile["default_lookback_days"])
+
+            media_limit = _to_optional_int(form["media_limit"], "Media limit", minimum=1)
+            if media_limit is None:
+                media_limit = int(profile["default_media_limit"])
+
+            comments_per_media = _to_optional_int(form["comments_per_media"], "Comments per media", minimum=1)
+            if comments_per_media is None:
+                comments_per_media = int(profile["default_comments_per_media"])
+
+            max_profiles = _to_optional_int(form["max_profiles"], "Max profiles", minimum=1)
+            if max_profiles is None:
+                max_profiles = profile["default_max_profiles"]
+
+            run_id = create_run(
+                profile_id=profile_id,
                 media_limit=media_limit,
                 comments_per_media=comments_per_media,
                 lookback_days=lookback_days,
                 max_profiles=max_profiles,
             )
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"report_{_slug(str(profile['name']))}_{timestamp}.csv"
-            output_path = write_csv(records, str(OUTPUT_DIR / filename))
-            finish_run_success(run_id, lead_count=len(records), output_filename=output_path.name)
 
-            message = (
-                f"Report complete. Found {len(records)} leads. "
-                f"<a href='{url_for('download_output', filename=output_path.name)}'>Download CSV</a>."
-            )
-            return _render_page(message=message, preview=records[:25], show_setup_form=False)
+            try:
+                settings = build_settings(
+                    access_token=str(profile["access_token"]),
+                    business_account_id=str(profile["business_account_id"]),
+                    graph_version=str(profile["graph_version"]),
+                    timeout_seconds=int(profile["timeout_seconds"]),
+                    retry_count=int(profile["retry_count"]),
+                    retry_backoff_seconds=float(profile["retry_backoff_seconds"]),
+                )
+                client = InstagramGraphClient(settings)
+                records = build_leads(
+                    client=client,
+                    media_limit=media_limit,
+                    comments_per_media=comments_per_media,
+                    lookback_days=lookback_days,
+                    max_profiles=max_profiles,
+                )
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                filename = f"report_{_slug(str(profile['name']))}_{timestamp}.csv"
+                output_path = write_csv(records, str(OUTPUT_DIR / filename))
+                finish_run_success(run_id, lead_count=len(records), output_filename=output_path.name)
+
+                message = (
+                    f"Report complete for <strong>{profile['name']}</strong>. Found {len(records)} leads. "
+                    f"<a href='{url_for('download_output', filename=output_path.name)}'>Download CSV</a>."
+                )
+                form["lookback_days"] = str(lookback_days)
+                form["media_limit"] = str(media_limit)
+                form["comments_per_media"] = str(comments_per_media)
+                form["max_profiles"] = "" if max_profiles is None else str(max_profiles)
+                return _render_page(
+                    message=message,
+                    preview=records[:25],
+                    run_form=form,
+                    selected_profile_id=profile_id,
+                )
+            except Exception as err:  # noqa: BLE001
+                finish_run_failure(run_id, str(err))
+                friendly = _friendly_api_error_text(str(err))
+                return _render_page(
+                    error=f"Run failed: {friendly}",
+                    run_form=form,
+                    selected_profile_id=profile_id,
+                )
         except Exception as err:  # noqa: BLE001
-            finish_run_failure(run_id, str(err))
-            friendly = _friendly_api_error_text(str(err))
-            return _render_page(error=f"Run failed: {friendly}", show_setup_form=False)
+            return _render_page(error=str(err), run_form=form)
 
     @app.get("/download/<path:filename>")
     def download_output(filename: str):

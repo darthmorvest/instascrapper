@@ -47,7 +47,7 @@ cp .env.example .env
 ig-scrubber --output leads.csv --media-limit 30 --comments-per-media 200 --lookback-days 120
 ```
 
-## Web app mode (simple flow)
+## Web app mode (multi-account flow)
 
 Start the web app:
 
@@ -62,13 +62,15 @@ Open:
 
 How it works:
 
-1. Complete **One-Time Setup** (`account id + access token`)
-2. Click **Run Report Now** any time you want fresh leads
-3. Download current/old reports from **Report History**
+1. Add one or more Instagram account profiles (`label + account ID + access token`)
+2. In **Run Report**, select which account to run
+3. Set **Lookback Days** for this run
+4. Click **Run Report Now**
+5. Download current/old reports from **Report History**
 
-Defaults can be changed under **Edit Setup**.
+Defaults can be saved per account (media limit, comments per media, lookback days).
 
-If `IG_ACCESS_TOKEN` and `IG_BUSINESS_ACCOUNT_ID` are set in environment variables, the app auto-bootstraps setup on startup.
+If `IG_ACCESS_TOKEN` and `IG_BUSINESS_ACCOUNT_ID` are set in environment variables, the app auto-creates one default account on startup.
 
 ## Deploy on a subdomain
 
