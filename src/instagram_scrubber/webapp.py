@@ -9,7 +9,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import requests
-from flask import Flask, abort, render_template_string, request, send_from_directory, url_for
+from flask import Flask, abort, jsonify, render_template_string, request, send_from_directory, url_for
 
 from .run_engine import process_run_step
 from .storage import (
@@ -191,6 +191,12 @@ INDEX_HTML = """
       background: var(--good-bg);
       border-color: var(--good-line);
       color: #14532d;
+    }
+
+    .warn {
+      background: #fffbeb;
+      border-color: #fcd34d;
+      color: #92400e;
     }
 
     .error {
@@ -405,21 +411,25 @@ INDEX_HTML = """
     {% if error %}
       <section class="card"><div class="error">{{ error }}</div></section>
     {% endif %}
+    {% if is_ephemeral %}
+      <section class="card"><div class="notice warn">Demo mode on Vercel uses temporary storage. Saved accounts and old reports can disappear after cold starts or redeploys. For production persistence, move storage to a managed database.</div></section>
+    {% endif %}
 
     {% if active_run and active_run.status in ['queued', 'running'] %}
       <section class="card" id="run-status">
         <h2>Run In Progress</h2>
-        <p class="muted">
+        <p class="muted" id="run-progress-message">
           Run #{{ active_run.id }} for <strong>{{ active_run.profile_name }}</strong>
           {% if active_run.progress_message %}- {{ active_run.progress_message }}{% endif %}
         </p>
         <div class="progress-wrap">
           {% set pct = ((active_run.progress_current / active_run.progress_total) * 100) if active_run.progress_total else 8 %}
-          <div class="progress-fill" style="width: {{ pct|round(0, 'floor') }}%;"></div>
+          <div id="run-progress-fill" class="progress-fill" style="width: {{ pct|round(0, 'floor') }}%;"></div>
         </div>
         <div class="actions">
-          <a class="btn alt" href="{{ url_for('index', active_run_id=active_run.id, auto=1, profile_id=run_form.profile_id) }}">Refresh Progress</a>
-          <span class="muted">{{ active_run.progress_current }} / {{ active_run.progress_total if active_run.progress_total else '?' }}</span>
+          <a class="btn alt" href="{{ url_for('index', active_run_id=active_run.id, profile_id=run_form.profile_id) }}">Refresh Progress</a>
+          <span class="muted" id="run-progress-count">{{ active_run.progress_current }} / {{ active_run.progress_total if active_run.progress_total else '?' }}</span>
+          <span class="muted">Scope: up to {{ active_run.media_limit }} posts, {{ active_run.comments_per_media }} comments/post</span>
         </div>
       </section>
     {% endif %}
@@ -505,15 +515,16 @@ INDEX_HTML = """
               <label for="lookback_days">Lookback Days</label>
               <input id="lookback_days" name="lookback_days" type="number" min="1" value="{{ run_form.lookback_days }}" required />
             </div>
+            <div>
+              <label for="media_limit">Posts to Scan</label>
+              <input id="media_limit" name="media_limit" type="number" min="1" value="{{ run_form.media_limit }}" />
+              <div class="muted">Current default is 25 posts per report.</div>
+            </div>
           </div>
 
           <details>
             <summary>Advanced Run Settings</summary>
             <div class="form-grid">
-              <div>
-                <label for="media_limit">Media Limit</label>
-                <input id="media_limit" name="media_limit" type="number" min="1" value="{{ run_form.media_limit }}" />
-              </div>
               <div>
                 <label for="comments_per_media">Comments per Media</label>
                 <input id="comments_per_media" name="comments_per_media" type="number" min="1" value="{{ run_form.comments_per_media }}" />
@@ -576,6 +587,7 @@ INDEX_HTML = """
             <th>Account</th>
             <th>Started</th>
             <th>Lookback</th>
+            <th>Posts</th>
             <th>Status</th>
             <th>Progress</th>
             <th>Report</th>
@@ -588,6 +600,7 @@ INDEX_HTML = """
             <td>{{ run.profile_name }}</td>
             <td>{{ run.started_at_display }}</td>
             <td>{{ run.lookback_days }} days</td>
+            <td>{{ run.media_limit }}</td>
             <td><span class="badge {{ run.status }}">{{ run.status }}</span></td>
             <td>
               {% if run.status in ['running', 'queued'] %}
@@ -650,9 +663,43 @@ INDEX_HTML = """
   </div>
   {% if auto_continue and active_run and active_run.status in ['queued', 'running'] %}
   <script>
-    setTimeout(function () {
-      window.location.href = "{{ url_for('index', active_run_id=active_run.id, auto=1, profile_id=run_form.profile_id) }}";
-    }, 1200);
+    (function () {
+      const endpoint = "{{ url_for('run_status', run_id=active_run.id) }}";
+      const finishUrl = "{{ url_for('index', active_run_id=active_run.id, profile_id=run_form.profile_id) }}";
+      const progressMessage = document.getElementById("run-progress-message");
+      const progressFill = document.getElementById("run-progress-fill");
+      const progressCount = document.getElementById("run-progress-count");
+
+      async function tick() {
+        try {
+          const res = await fetch(endpoint + "?advance=1&t=" + Date.now(), {
+            cache: "no-store",
+            headers: { "Accept": "application/json" }
+          });
+          if (!res.ok) {
+            setTimeout(tick, 1600);
+            return;
+          }
+          const data = await res.json();
+          if (progressMessage) {
+            progressMessage.innerHTML = "Run #" + data.id + " for <strong>" + data.profile_name + "</strong> - " + (data.progress_message || "Running");
+          }
+          if (progressCount) {
+            progressCount.textContent = (data.progress_current || 0) + " / " + (data.progress_total || "?");
+          }
+          if (progressFill) {
+            progressFill.style.width = (data.progress_percent || 8) + "%";
+          }
+          if (data.status === "success" || data.status === "failed") {
+            window.location.href = finishUrl;
+            return;
+          }
+        } catch (err) {}
+        setTimeout(tick, 1400);
+      }
+
+      setTimeout(tick, 900);
+    })();
   </script>
   {% endif %}
 </body>
@@ -958,6 +1005,7 @@ def _render_page(
         preview=preview,
         active_run=active_run,
         auto_continue=auto_continue,
+        is_ephemeral=os.getenv("VERCEL") == "1",
         account_form=account_form,
         run_form=run_form,
         storage_mode=f"ephemeral ({db_path()})" if os.getenv("VERCEL") == "1" else str(db_path()),
@@ -981,7 +1029,6 @@ def create_app() -> Flask:
         selected_profile_id = int(selected_raw) if selected_raw.isdigit() else None
         active_run_raw = request.args.get("active_run_id", "").strip()
         active_run_id = int(active_run_raw) if active_run_raw.isdigit() else None
-        auto = request.args.get("auto", "").strip() == "1"
 
         active_run = None
         message = None
@@ -991,14 +1038,11 @@ def create_app() -> Flask:
 
         if active_run_id is not None:
             try:
-                if auto:
-                    active_run = process_run_step(run_id=active_run_id, output_dir=OUTPUT_DIR)
-                else:
-                    active_run = get_run(active_run_id)
+                active_run = get_run(active_run_id)
             except Exception as err:  # noqa: BLE001
                 error = f"Run failed: {_friendly_api_error_text(str(err))}"
                 active_run = get_run(active_run_id)
-        elif not auto:
+        else:
             running = next(
                 (row for row in list_runs(limit=10) if row.get("status") in {"queued", "running"}),
                 None,
@@ -1188,6 +1232,47 @@ def create_app() -> Flask:
             )
         except Exception as err:  # noqa: BLE001
             return _render_page(error=str(err), run_form=form)
+
+    @app.get("/runs/<int:run_id>/status")
+    def run_status(run_id: int):
+        advance = request.args.get("advance", "").strip() == "1"
+        try:
+            run = process_run_step(run_id=run_id, output_dir=OUTPUT_DIR) if advance else get_run(run_id)
+        except Exception as err:  # noqa: BLE001
+            fallback = get_run(run_id)
+            if fallback is None:
+                return jsonify({"error": str(err)}), 500
+            run = fallback
+
+        if run is None:
+            abort(404)
+
+        progress_total = int(run.get("progress_total") or 0)
+        progress_current = int(run.get("progress_current") or 0)
+        if progress_total > 0:
+            pct = max(1, min(100, int((progress_current / progress_total) * 100)))
+        else:
+            pct = 8 if run.get("status") in {"queued", "running"} else 100
+
+        return jsonify(
+            {
+                "id": int(run["id"]),
+                "profile_id": int(run["profile_id"]),
+                "profile_name": str(run.get("profile_name") or ""),
+                "status": str(run.get("status") or "running"),
+                "phase": str(run.get("phase") or ""),
+                "progress_message": str(run.get("progress_message") or ""),
+                "progress_current": progress_current,
+                "progress_total": progress_total,
+                "progress_percent": pct,
+                "media_limit": int(run.get("media_limit") or 0),
+                "comments_per_media": int(run.get("comments_per_media") or 0),
+                "lookback_days": int(run.get("lookback_days") or 0),
+                "lead_count": int(run.get("lead_count") or 0),
+                "output_filename": run.get("output_filename"),
+                "error_message": run.get("error_message"),
+            }
+        )
 
     @app.get("/download/<path:filename>")
     def download_output(filename: str):
