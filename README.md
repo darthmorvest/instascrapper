@@ -130,12 +130,27 @@ git push -u origin main
 
 Optional for CLI-only workflows. Web profile mode stores credentials in app storage:
 
+- `DATABASE_URL` (recommended for persistent Supabase/Postgres storage)
 - `IG_ACCESS_TOKEN`
 - `IG_BUSINESS_ACCOUNT_ID`
 - `IG_GRAPH_VERSION` (optional, e.g. `v21.0`)
 - `REQUEST_TIMEOUT_SECONDS` (optional)
 - `REQUEST_RETRY_COUNT` (optional)
 - `REQUEST_RETRY_BACKOFF_SECONDS` (optional)
+
+#### 3.1) Supabase managed database (recommended)
+
+1. In Supabase: Project Settings -> Database -> Connection string -> Transaction pooler
+2. Copy the full `postgresql://...` URI
+3. In Vercel: Project Settings -> Environment Variables
+4. Add `DATABASE_URL` with that Supabase URI
+5. Redeploy
+
+When `DATABASE_URL` is set, this app uses managed Postgres automatically and persists:
+
+- Saved account profiles
+- Run history
+- Report metadata
 
 #### 4) Deploy + attach subdomain
 
@@ -146,17 +161,17 @@ Optional for CLI-only workflows. Web profile mode stores credentials in app stor
 
 #### Important persistence note on Vercel
 
-This app uses SQLite by default:
+Without `DATABASE_URL`, this app uses SQLite:
 
 - Local/VPS: persistent at `data/instagram_scrubber.db`
 - Vercel: stored in `/tmp` (ephemeral), so profiles and run history are not guaranteed to persist
 
-For durable one-time setup + old report history, run this on VPS/Render/Railway or switch storage to a managed database.
+For durable one-time setup + old report history on Vercel, set `DATABASE_URL` to Supabase/Postgres.
 
 #### Timeout-safe runner on Vercel
 
 Report execution is chunked into resumable steps, so large runs do not need to finish in one function invocation.  
-If a run is still in progress, keep the tab open; the dashboard auto-refreshes and continues until complete.
+If a run is still in progress, keep the tab open; the dashboard updates progress in place and continues until complete.
 
 ## Required environment variables
 
@@ -171,6 +186,7 @@ Optional:
 - `REQUEST_TIMEOUT_SECONDS` (default: `25`)
 - `REQUEST_RETRY_COUNT` (default: `3`)
 - `REQUEST_RETRY_BACKOFF_SECONDS` (default: `1.5`)
+- `DATABASE_URL` (optional but recommended on Vercel): managed Postgres connection string
 - `RUN_STEP_BUDGET_SECONDS` (default: `7`) - per-request processing budget for queued runs
 - `RUN_MEDIA_BATCH_SIZE` (default: `2`) - media items processed per run step
 - `RUN_PROFILE_BATCH_SIZE` (default: `3`) - profiles enriched per run step

@@ -15,13 +15,14 @@ from .run_engine import process_run_step
 from .storage import (
     create_profile,
     create_run,
-    db_path,
     delete_profile,
     get_profile,
     get_run,
     init_db,
+    is_ephemeral_storage,
     list_profiles,
     list_runs,
+    storage_mode_label,
 )
 
 if os.getenv("VERCEL") == "1":
@@ -1005,10 +1006,10 @@ def _render_page(
         preview=preview,
         active_run=active_run,
         auto_continue=auto_continue,
-        is_ephemeral=os.getenv("VERCEL") == "1",
+        is_ephemeral=is_ephemeral_storage(),
         account_form=account_form,
         run_form=run_form,
-        storage_mode=f"ephemeral ({db_path()})" if os.getenv("VERCEL") == "1" else str(db_path()),
+        storage_mode=storage_mode_label(),
         stats={
             "account_count": len(profiles),
             "total_runs": total_runs,
@@ -1141,6 +1142,12 @@ def create_app() -> Flask:
                 account_form=form,
             )
         except Exception as err:  # noqa: BLE001
+            err_text = str(err).lower()
+            if "unique" in err_text and "name" in err_text:
+                return _render_page(
+                    error="An account with this label already exists. Use a different label.",
+                    account_form=form,
+                )
             return _render_page(error=str(err), account_form=form)
 
     @app.post("/accounts/<int:profile_id>/delete")

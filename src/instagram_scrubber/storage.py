@@ -7,6 +7,15 @@ from pathlib import Path
 from typing import Any
 
 
+def _database_url() -> str:
+    return os.getenv("DATABASE_URL", "").strip()
+
+
+def using_postgres() -> bool:
+    url = _database_url().lower()
+    return url.startswith("postgres://") or url.startswith("postgresql://")
+
+
 def db_path() -> Path:
     if os.getenv("VERCEL") == "1":
         return Path("/tmp/instagram_scrubber.db")
@@ -15,19 +24,162 @@ def db_path() -> Path:
     return data_dir / "instagram_scrubber.db"
 
 
+def is_ephemeral_storage() -> bool:
+    return os.getenv("VERCEL") == "1" and not using_postgres()
+
+
+def storage_mode_label() -> str:
+    if using_postgres():
+        return "managed-postgres (DATABASE_URL)"
+    if os.getenv("VERCEL") == "1":
+        return f"ephemeral ({db_path()})"
+    return str(db_path())
+
+
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _connect() -> sqlite3.Connection:
+def _connect():
+    if using_postgres():
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+        except Exception as err:  # noqa: BLE001
+            raise RuntimeError(
+                "DATABASE_URL is set, but Postgres driver is missing. Install psycopg[binary]."
+            ) from err
+        return psycopg.connect(_database_url(), row_factory=dict_row)
+
     conn = sqlite3.connect(db_path())
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
 
+def _bind(sql: str) -> str:
+    if using_postgres():
+        return sql.replace("?", "%s")
+    return sql
+
+
+def _execute(conn, sql: str, params: tuple[Any, ...] = ()):
+    return conn.execute(_bind(sql), params)
+
+
+def _row_to_dict(row: Any) -> dict[str, Any]:
+    if isinstance(row, dict):
+        return dict(row)
+    if isinstance(row, sqlite3.Row):
+        return {k: row[k] for k in row.keys()}
+    if hasattr(row, "keys"):
+        return {k: row[k] for k in row.keys()}
+    raise TypeError(f"Unsupported row type: {type(row)!r}")
+
+
+def _has_column_sqlite(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    return any(row["name"] == column for row in rows)
+
+
+def _has_column_postgres(conn, table: str, column: str) -> bool:
+    row = _execute(
+        conn,
+        """
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = ?
+          AND column_name = ?
+        LIMIT 1
+        """,
+        (table, column),
+    ).fetchone()
+    return row is not None
+
+
+def _migrate_runs_table_sqlite(conn: sqlite3.Connection) -> None:
+    additions = [
+        ("phase", "TEXT NOT NULL DEFAULT 'queued'"),
+        ("progress_message", "TEXT"),
+        ("progress_current", "INTEGER NOT NULL DEFAULT 0"),
+        ("progress_total", "INTEGER NOT NULL DEFAULT 0"),
+        ("state_json", "TEXT"),
+        ("preview_json", "TEXT"),
+    ]
+    for column, definition in additions:
+        if _has_column_sqlite(conn, "runs", column):
+            continue
+        conn.execute(f"ALTER TABLE runs ADD COLUMN {column} {definition}")
+
+
+def _migrate_runs_table_postgres(conn) -> None:
+    additions = [
+        ("phase", "TEXT NOT NULL DEFAULT 'queued'"),
+        ("progress_message", "TEXT"),
+        ("progress_current", "INTEGER NOT NULL DEFAULT 0"),
+        ("progress_total", "INTEGER NOT NULL DEFAULT 0"),
+        ("state_json", "TEXT"),
+        ("preview_json", "TEXT"),
+    ]
+    for column, definition in additions:
+        if _has_column_postgres(conn, "runs", column):
+            continue
+        _execute(conn, f"ALTER TABLE runs ADD COLUMN IF NOT EXISTS {column} {definition}")
+
+
 def init_db() -> None:
     with _connect() as conn:
+        if using_postgres():
+            _execute(
+                conn,
+                """
+                CREATE TABLE IF NOT EXISTS profiles (
+                  id BIGSERIAL PRIMARY KEY,
+                  name TEXT NOT NULL UNIQUE,
+                  access_token TEXT NOT NULL,
+                  business_account_id TEXT NOT NULL,
+                  graph_version TEXT NOT NULL DEFAULT 'v21.0',
+                  timeout_seconds INTEGER NOT NULL DEFAULT 25,
+                  retry_count INTEGER NOT NULL DEFAULT 3,
+                  retry_backoff_seconds DOUBLE PRECISION NOT NULL DEFAULT 1.5,
+                  default_media_limit INTEGER NOT NULL DEFAULT 25,
+                  default_comments_per_media INTEGER NOT NULL DEFAULT 200,
+                  default_lookback_days INTEGER NOT NULL DEFAULT 90,
+                  default_max_profiles INTEGER,
+                  created_at TEXT NOT NULL,
+                  updated_at TEXT NOT NULL
+                )
+                """,
+            )
+            _execute(
+                conn,
+                """
+                CREATE TABLE IF NOT EXISTS runs (
+                  id BIGSERIAL PRIMARY KEY,
+                  profile_id BIGINT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+                  started_at TEXT NOT NULL,
+                  completed_at TEXT,
+                  status TEXT NOT NULL,
+                  phase TEXT NOT NULL DEFAULT 'queued',
+                  progress_message TEXT,
+                  progress_current INTEGER NOT NULL DEFAULT 0,
+                  progress_total INTEGER NOT NULL DEFAULT 0,
+                  media_limit INTEGER NOT NULL,
+                  comments_per_media INTEGER NOT NULL,
+                  lookback_days INTEGER NOT NULL,
+                  max_profiles INTEGER,
+                  lead_count INTEGER,
+                  output_filename TEXT,
+                  error_message TEXT,
+                  state_json TEXT,
+                  preview_json TEXT
+                )
+                """,
+            )
+            _migrate_runs_table_postgres(conn)
+            return
+
         conn.executescript(
             """
             CREATE TABLE IF NOT EXISTS profiles (
@@ -70,36 +222,13 @@ def init_db() -> None:
             );
             """
         )
-        _migrate_runs_table(conn)
-
-
-def _has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:
-    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
-    return any(row["name"] == column for row in rows)
-
-
-def _migrate_runs_table(conn: sqlite3.Connection) -> None:
-    additions = [
-        ("phase", "TEXT NOT NULL DEFAULT 'queued'"),
-        ("progress_message", "TEXT"),
-        ("progress_current", "INTEGER NOT NULL DEFAULT 0"),
-        ("progress_total", "INTEGER NOT NULL DEFAULT 0"),
-        ("state_json", "TEXT"),
-        ("preview_json", "TEXT"),
-    ]
-    for column, definition in additions:
-        if _has_column(conn, "runs", column):
-            continue
-        conn.execute(f"ALTER TABLE runs ADD COLUMN {column} {definition}")
-
-
-def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
-    return {k: row[k] for k in row.keys()}
+        _migrate_runs_table_sqlite(conn)
 
 
 def list_profiles() -> list[dict[str, Any]]:
     with _connect() as conn:
-        rows = conn.execute(
+        rows = _execute(
+            conn,
             """
             SELECT
               id,
@@ -117,14 +246,15 @@ def list_profiles() -> list[dict[str, Any]]:
               updated_at
             FROM profiles
             ORDER BY name ASC
-            """
+            """,
         ).fetchall()
     return [_row_to_dict(row) for row in rows]
 
 
 def get_profile(profile_id: int) -> dict[str, Any] | None:
     with _connect() as conn:
-        row = conn.execute(
+        row = _execute(
+            conn,
             """
             SELECT
               id,
@@ -153,7 +283,8 @@ def get_profile(profile_id: int) -> dict[str, Any] | None:
 
 def get_active_profile() -> dict[str, Any] | None:
     with _connect() as conn:
-        row = conn.execute(
+        row = _execute(
+            conn,
             """
             SELECT
               id,
@@ -173,7 +304,7 @@ def get_active_profile() -> dict[str, Any] | None:
             FROM profiles
             ORDER BY updated_at DESC, id DESC
             LIMIT 1
-            """
+            """,
         ).fetchone()
     if row is None:
         return None
@@ -195,8 +326,53 @@ def create_profile(
     default_max_profiles: int | None,
 ) -> int:
     created_at = _utc_now_iso()
+    values = (
+        name.strip(),
+        access_token.strip(),
+        business_account_id.strip(),
+        graph_version.strip() or "v21.0",
+        timeout_seconds,
+        retry_count,
+        retry_backoff_seconds,
+        default_media_limit,
+        default_comments_per_media,
+        default_lookback_days,
+        default_max_profiles,
+        created_at,
+        created_at,
+    )
+
     with _connect() as conn:
-        cursor = conn.execute(
+        if using_postgres():
+            row = _execute(
+                conn,
+                """
+                INSERT INTO profiles (
+                  name,
+                  access_token,
+                  business_account_id,
+                  graph_version,
+                  timeout_seconds,
+                  retry_count,
+                  retry_backoff_seconds,
+                  default_media_limit,
+                  default_comments_per_media,
+                  default_lookback_days,
+                  default_max_profiles,
+                  created_at,
+                  updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                RETURNING id
+                """,
+                values,
+            ).fetchone()
+            if row is None:
+                raise RuntimeError("Failed to create profile")
+            return int(_row_to_dict(row)["id"])
+
+        cursor = _execute(
+            conn,
             """
             INSERT INTO profiles (
               name,
@@ -215,21 +391,7 @@ def create_profile(
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (
-                name.strip(),
-                access_token.strip(),
-                business_account_id.strip(),
-                graph_version.strip() or "v21.0",
-                timeout_seconds,
-                retry_count,
-                retry_backoff_seconds,
-                default_media_limit,
-                default_comments_per_media,
-                default_lookback_days,
-                default_max_profiles,
-                created_at,
-                created_at,
-            ),
+            values,
         )
         return int(cursor.lastrowid)
 
@@ -250,7 +412,8 @@ def update_profile(
     default_max_profiles: int | None,
 ) -> None:
     with _connect() as conn:
-        conn.execute(
+        _execute(
+            conn,
             """
             UPDATE profiles
             SET
@@ -335,7 +498,7 @@ def upsert_active_profile(
 
 def delete_profile(profile_id: int) -> None:
     with _connect() as conn:
-        conn.execute("DELETE FROM profiles WHERE id = ?", (profile_id,))
+        _execute(conn, "DELETE FROM profiles WHERE id = ?", (profile_id,))
 
 
 def create_run(
@@ -346,8 +509,45 @@ def create_run(
     lookback_days: int,
     max_profiles: int | None,
 ) -> int:
+    values = (
+        profile_id,
+        _utc_now_iso(),
+        media_limit,
+        comments_per_media,
+        lookback_days,
+        max_profiles,
+    )
     with _connect() as conn:
-        cursor = conn.execute(
+        if using_postgres():
+            row = _execute(
+                conn,
+                """
+                INSERT INTO runs (
+                  profile_id,
+                  started_at,
+                  status,
+                  phase,
+                  progress_message,
+                  progress_current,
+                  progress_total,
+                  media_limit,
+                  comments_per_media,
+                  lookback_days,
+                  max_profiles,
+                  state_json,
+                  preview_json
+                )
+                VALUES (?, ?, 'queued', 'queued', 'Queued', 0, 0, ?, ?, ?, ?, '{}', '[]')
+                RETURNING id
+                """,
+                values,
+            ).fetchone()
+            if row is None:
+                raise RuntimeError("Failed to create run")
+            return int(_row_to_dict(row)["id"])
+
+        cursor = _execute(
+            conn,
             """
             INSERT INTO runs (
               profile_id,
@@ -366,21 +566,15 @@ def create_run(
             )
             VALUES (?, ?, 'queued', 'queued', 'Queued', 0, 0, ?, ?, ?, ?, '{}', '[]')
             """,
-            (
-                profile_id,
-                _utc_now_iso(),
-                media_limit,
-                comments_per_media,
-                lookback_days,
-                max_profiles,
-            ),
+            values,
         )
         return int(cursor.lastrowid)
 
 
 def get_run(run_id: int) -> dict[str, Any] | None:
     with _connect() as conn:
-        row = conn.execute(
+        row = _execute(
+            conn,
             """
             SELECT
               runs.id,
@@ -454,7 +648,8 @@ def update_run_progress(
 
     values.append(run_id)
     with _connect() as conn:
-        conn.execute(
+        _execute(
+            conn,
             f"""
             UPDATE runs
             SET {", ".join(updates)}
@@ -472,7 +667,8 @@ def finish_run_success(
     preview_json: str | None = None,
 ) -> None:
     with _connect() as conn:
-        conn.execute(
+        _execute(
+            conn,
             """
             UPDATE runs
             SET
@@ -493,7 +689,8 @@ def finish_run_success(
 
 def finish_run_failure(run_id: int, error_message: str) -> None:
     with _connect() as conn:
-        conn.execute(
+        _execute(
+            conn,
             """
             UPDATE runs
             SET
@@ -511,7 +708,8 @@ def finish_run_failure(run_id: int, error_message: str) -> None:
 
 def list_runs(limit: int = 50) -> list[dict[str, Any]]:
     with _connect() as conn:
-        rows = conn.execute(
+        rows = _execute(
+            conn,
             """
             SELECT
               runs.id,
