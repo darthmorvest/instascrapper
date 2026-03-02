@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "instagram-scrubber"
+version = "0.1.0"
+description = "Lead scraper for verified podcast creators from Instagram comment interactions."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "beautifulsoup4==4.12.3",
+  "Flask==3.0.3",
+  "gunicorn==22.0.0",
+  "python-dotenv==1.0.1",
+  "requests==2.32.3",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[project.scripts]
+ig-scrubber = "instagram_scrubber.cli:main"
+ig-scrubber-web = "instagram_scrubber.webapp:main"
