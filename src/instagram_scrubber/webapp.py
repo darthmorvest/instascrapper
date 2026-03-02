@@ -33,113 +33,177 @@ INDEX_HTML = """
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Instagram Lead Scrubber</title>
+  <title>InstaScrapper | Podcast Lead Intelligence</title>
   <style>
+    @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Sora:wght@600;700;800&display=swap');
+
     :root {
-      --bg-1: #f5f9ff;
-      --bg-2: #eaf7f2;
+      --bg-a: #eff7ff;
+      --bg-b: #eef9f3;
       --panel: #ffffff;
-      --line: #d8e3ef;
-      --text: #14263b;
-      --sub: #4f6479;
-      --accent: #0f766e;
-      --accent-2: #0e7490;
-      --ok-bg: #dcfce7;
-      --ok-line: #86efac;
-      --warn-bg: #fff1f2;
-      --warn-line: #fecdd3;
+      --line: #d7e4ef;
+      --text: #10253a;
+      --sub: #4a647a;
+      --accent: #0b7285;
+      --accent-2: #0f766e;
+      --accent-soft: #e0f4f5;
+      --good-bg: #dcfce7;
+      --good-line: #86efac;
+      --bad-bg: #fff1f2;
+      --bad-line: #fecdd3;
+      --shadow: 0 14px 32px rgba(8, 39, 68, 0.08);
     }
+
     * { box-sizing: border-box; }
+
     body {
       margin: 0;
-      color: var(--text);
-      font-family: "Avenir Next", "Nunito Sans", "Segoe UI", sans-serif;
-      background:
-        radial-gradient(circle at 12% 0%, #d8efff 0%, rgba(216, 239, 255, 0) 40%),
-        linear-gradient(180deg, var(--bg-1), var(--bg-2));
       min-height: 100vh;
-      padding: 20px 14px 42px;
+      color: var(--text);
+      font-family: "Manrope", "Avenir Next", "Segoe UI", sans-serif;
+      background:
+        radial-gradient(circle at 10% 0%, #d7ecff 0%, rgba(215, 236, 255, 0) 40%),
+        radial-gradient(circle at 90% 5%, #dff8f0 0%, rgba(223, 248, 240, 0) 30%),
+        linear-gradient(180deg, var(--bg-a), var(--bg-b));
+      padding: 24px 14px 48px;
     }
-    .wrap {
-      max-width: 1050px;
+
+    .shell {
+      max-width: 1100px;
       margin: 0 auto;
       display: grid;
       gap: 14px;
+      animation: rise 460ms ease both;
     }
+
+    @keyframes rise {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
     .card {
       background: var(--panel);
       border: 1px solid var(--line);
-      border-radius: 14px;
-      padding: 15px;
-      box-shadow: 0 10px 24px rgba(4, 33, 68, 0.06);
+      border-radius: 16px;
+      padding: 16px;
+      box-shadow: var(--shadow);
     }
-    h1, h2 {
-      margin: 0;
+
+    .hero {
+      position: relative;
+      overflow: hidden;
+      background:
+        linear-gradient(125deg, rgba(11, 114, 133, 0.07), rgba(15, 118, 110, 0.09) 55%, rgba(255, 255, 255, 0.9)),
+        #fff;
     }
+
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border: 1px solid #b8d8de;
+      background: #f2fcfd;
+      color: #0b5666;
+      border-radius: 999px;
+      padding: 5px 11px;
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.2px;
+      text-transform: uppercase;
+    }
+
     h1 {
-      font-size: 1.75rem;
-      letter-spacing: 0.15px;
+      margin: 10px 0 4px;
+      font-family: "Sora", "Manrope", sans-serif;
+      font-size: 1.72rem;
+      line-height: 1.22;
+      letter-spacing: 0.2px;
     }
-    h2 {
-      font-size: 1.08rem;
-      margin-bottom: 8px;
-    }
+
     .sub {
-      margin-top: 6px;
+      margin: 0;
       color: var(--sub);
-      font-size: 0.95rem;
+      font-size: 0.94rem;
     }
-    .steps {
-      margin-top: 8px;
-      color: var(--sub);
-      font-size: 0.9rem;
+
+    .flow {
+      margin-top: 11px;
       display: flex;
       gap: 8px;
       flex-wrap: wrap;
+      color: #255a6d;
+      font-size: 0.82rem;
+      font-weight: 600;
     }
-    .step {
-      border: 1px solid #cde8db;
-      background: #f1fdf7;
+
+    .flow span {
+      border: 1px solid #c8e4e9;
+      background: #f2fcfd;
       border-radius: 999px;
       padding: 4px 10px;
     }
-    .notice,
-    .error {
-      padding: 10px 12px;
-      border-radius: 10px;
-      border: 1px solid;
-      font-size: 0.92rem;
-    }
-    .notice {
-      background: var(--ok-bg);
-      border-color: var(--ok-line);
-      color: #065f46;
-    }
-    .error {
-      background: var(--warn-bg);
-      border-color: var(--warn-line);
-      color: #881337;
-    }
-    .grid {
+
+    .stats {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+      grid-template-columns: repeat(4, minmax(0, 1fr));
       gap: 10px;
     }
-    label {
-      display: block;
-      margin-bottom: 5px;
-      color: var(--sub);
-      font-size: 0.84rem;
-    }
-    input {
-      width: 100%;
+
+    .stat {
       border: 1px solid var(--line);
-      border-radius: 10px;
-      padding: 10px;
-      font-size: 0.92rem;
-      color: #0f172a;
-      background: #fff;
+      border-radius: 12px;
+      background: #fbfdff;
+      padding: 12px;
     }
+
+    .stat .label {
+      font-size: 0.77rem;
+      color: var(--sub);
+      text-transform: uppercase;
+      letter-spacing: 0.55px;
+      font-weight: 700;
+    }
+
+    .stat .value {
+      margin-top: 4px;
+      font-size: 1.25rem;
+      font-weight: 800;
+      color: #16344f;
+      word-break: break-word;
+    }
+
+    .notice,
+    .error {
+      border: 1px solid;
+      border-radius: 11px;
+      padding: 10px 12px;
+      font-size: 0.92rem;
+    }
+
+    .notice {
+      background: var(--good-bg);
+      border-color: var(--good-line);
+      color: #14532d;
+    }
+
+    .error {
+      background: var(--bad-bg);
+      border-color: var(--bad-line);
+      color: #881337;
+    }
+
+    h2 {
+      margin: 0 0 8px;
+      font-family: "Sora", "Manrope", sans-serif;
+      font-size: 1.04rem;
+      letter-spacing: 0.1px;
+    }
+
+    .muted {
+      color: var(--sub);
+      font-size: 0.88rem;
+    }
+
     .actions {
       display: flex;
       gap: 8px;
@@ -147,41 +211,80 @@ INDEX_HTML = """
       align-items: center;
       margin-top: 10px;
     }
-    button {
+
+    button,
+    .btn {
       border: 0;
       border-radius: 10px;
       padding: 10px 14px;
-      color: #fff;
+      font-size: 0.88rem;
+      font-weight: 700;
       cursor: pointer;
-      font-size: 0.9rem;
-      font-weight: 600;
-      background: linear-gradient(145deg, var(--accent), var(--accent-2));
+      color: #fff;
+      background: linear-gradient(140deg, var(--accent), var(--accent-2));
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: transform 120ms ease;
     }
-    .secondary {
+
+    button:hover,
+    .btn:hover { transform: translateY(-1px); }
+
+    .btn.alt {
       background: #fff;
-      border: 1px solid #c3d7ea;
-      color: #1e3a5f;
+      color: #1f3f60;
+      border: 1px solid #bfd7ea;
     }
-    .muted {
+
+    .form-grid {
+      margin-top: 10px;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 10px;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 5px;
       color: var(--sub);
-      font-size: 0.86rem;
+      font-size: 0.82rem;
+      font-weight: 600;
     }
+
+    input {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px;
+      font-size: 0.91rem;
+      color: #0f172a;
+      background: #fff;
+    }
+
     details {
       margin-top: 10px;
-      border-top: 1px dashed #dbe5ef;
+      border-top: 1px dashed #dbe5ee;
       padding-top: 10px;
     }
+
     summary {
       cursor: pointer;
-      color: #164e63;
+      color: #135f72;
+      font-weight: 700;
       font-size: 0.9rem;
-      font-weight: 600;
+      list-style: none;
     }
+
+    summary::-webkit-details-marker { display: none; }
+
     table {
       width: 100%;
       border-collapse: collapse;
       font-size: 0.9rem;
     }
+
     th,
     td {
       text-align: left;
@@ -189,36 +292,90 @@ INDEX_HTML = """
       padding: 8px 6px;
       vertical-align: top;
     }
+
     th {
-      color: var(--sub);
-      font-weight: 600;
       background: #f8fbff;
+      color: var(--sub);
+      font-size: 0.79rem;
+      letter-spacing: 0.24px;
+      text-transform: uppercase;
     }
-    a {
-      color: #0f4f8a;
-      text-decoration: none;
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 4px 9px;
+      font-size: 0.74rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.35px;
+      border: 1px solid;
     }
+
+    .badge.success {
+      background: #ecfdf3;
+      color: #166534;
+      border-color: #a7f3d0;
+    }
+
+    .badge.failed {
+      background: #fff1f2;
+      color: #9f1239;
+      border-color: #fecdd3;
+    }
+
+    .badge.running {
+      background: #eff6ff;
+      color: #1d4ed8;
+      border-color: #bfdbfe;
+    }
+
+    a { color: #0f4f8a; text-decoration: none; }
     a:hover { text-decoration: underline; }
+
+    @media (max-width: 980px) {
+      .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+
     @media (max-width: 760px) {
-      .actions {
-        flex-direction: column;
-        align-items: stretch;
-      }
-      button {
-        width: 100%;
-      }
+      body { padding: 16px 10px 34px; }
+      .stats { grid-template-columns: 1fr; }
+      .actions { flex-direction: column; align-items: stretch; }
+      button,
+      .btn { width: 100%; }
     }
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <section class="card">
-      <h1>Instagram Lead Scrubber</h1>
-      <div class="sub">Simple workflow: setup once, then run reports whenever you want.</div>
-      <div class="steps">
-        <span class="step">1. Setup once</span>
-        <span class="step">2. Click Run Report</span>
-        <span class="step">3. View old reports</span>
+  <div class="shell">
+    <section class="card hero">
+      <div class="brand">InstaScrapper Pro</div>
+      <h1>Podcast Lead Intelligence Dashboard</h1>
+      <p class="sub">One-time setup. One-click report runs. Clean history for every previous export.</p>
+      <div class="flow">
+        <span>1. Setup</span>
+        <span>2. Run Report</span>
+        <span>3. Download from History</span>
+      </div>
+    </section>
+
+    <section class="stats">
+      <div class="stat">
+        <div class="label">Workspace</div>
+        <div class="value">{{ profile.name if profile else 'Not configured' }}</div>
+      </div>
+      <div class="stat">
+        <div class="label">Total Runs</div>
+        <div class="value">{{ stats.total_runs }}</div>
+      </div>
+      <div class="stat">
+        <div class="label">Successful</div>
+        <div class="value">{{ stats.success_runs }}</div>
+      </div>
+      <div class="stat">
+        <div class="label">Last Report</div>
+        <div class="value">{{ stats.last_report_at }}</div>
       </div>
     </section>
 
@@ -230,30 +387,23 @@ INDEX_HTML = """
     {% endif %}
 
     <section class="card">
-      {% if profile %}
-        <h2>Setup Complete</h2>
-        <div class="sub">Connected to account ID <strong>{{ profile.business_account_id }}</strong> as "{{ profile.name }}".</div>
+      <h2>Setup</h2>
+      {% if profile and not show_setup_form %}
+        <p class="muted">Connected account ID: <strong>{{ profile.business_account_id }}</strong>. Stored defaults will be used for each run.</p>
         <div class="actions">
           <form method="post" action="{{ url_for('run_scrub') }}">
             <button type="submit">Run Report Now</button>
           </form>
-          <form method="get" action="{{ url_for('index') }}">
-            <input type="hidden" name="edit_setup" value="1" />
-            <button type="submit" class="secondary">Edit Setup</button>
-          </form>
+          <a class="btn alt" href="{{ url_for('index') }}?edit_setup=1">Edit Setup</a>
         </div>
-        <div class="muted">Uses defaults: media {{ profile.default_media_limit }}, comments {{ profile.default_comments_per_media }}, lookback {{ profile.default_lookback_days }} days.</div>
-      {% else %}
-        <h2>One-Time Setup</h2>
-        <div class="sub">Add your Instagram API details once, then you can run reports from one button.</div>
       {% endif %}
 
       {% if show_setup_form %}
-      <form method="post" action="{{ url_for('setup') }}" style="margin-top: 12px;">
-        <div class="grid">
+      <form method="post" action="{{ url_for('setup') }}">
+        <div class="form-grid">
           <div>
-            <label for="name">Workspace name</label>
-            <input id="name" name="name" value="{{ setup_form.name }}" placeholder="My Lead Scrubber" required />
+            <label for="name">Workspace Name</label>
+            <input id="name" name="name" value="{{ setup_form.name }}" required />
           </div>
           <div>
             <label for="business_account_id">Instagram Business Account ID</label>
@@ -266,38 +416,38 @@ INDEX_HTML = """
         </div>
 
         <details>
-          <summary>Advanced defaults (optional)</summary>
-          <div class="grid" style="margin-top: 10px;">
+          <summary>Advanced Defaults</summary>
+          <div class="form-grid">
             <div>
-              <label for="graph_version">Graph version</label>
+              <label for="graph_version">Graph Version</label>
               <input id="graph_version" name="graph_version" value="{{ setup_form.graph_version }}" />
             </div>
             <div>
-              <label for="timeout_seconds">Timeout seconds</label>
+              <label for="timeout_seconds">Timeout Seconds</label>
               <input id="timeout_seconds" name="timeout_seconds" type="number" min="1" value="{{ setup_form.timeout_seconds }}" />
             </div>
             <div>
-              <label for="retry_count">Retry count</label>
+              <label for="retry_count">Retry Count</label>
               <input id="retry_count" name="retry_count" type="number" min="0" value="{{ setup_form.retry_count }}" />
             </div>
             <div>
-              <label for="retry_backoff_seconds">Retry backoff seconds</label>
+              <label for="retry_backoff_seconds">Retry Backoff Seconds</label>
               <input id="retry_backoff_seconds" name="retry_backoff_seconds" type="number" min="0" step="0.1" value="{{ setup_form.retry_backoff_seconds }}" />
             </div>
             <div>
-              <label for="default_media_limit">Default media limit</label>
+              <label for="default_media_limit">Default Media Limit</label>
               <input id="default_media_limit" name="default_media_limit" type="number" min="1" value="{{ setup_form.default_media_limit }}" />
             </div>
             <div>
-              <label for="default_comments_per_media">Default comments/media</label>
+              <label for="default_comments_per_media">Default Comments/Media</label>
               <input id="default_comments_per_media" name="default_comments_per_media" type="number" min="1" value="{{ setup_form.default_comments_per_media }}" />
             </div>
             <div>
-              <label for="default_lookback_days">Default lookback days</label>
+              <label for="default_lookback_days">Default Lookback Days</label>
               <input id="default_lookback_days" name="default_lookback_days" type="number" min="1" value="{{ setup_form.default_lookback_days }}" />
             </div>
             <div>
-              <label for="default_max_profiles">Default max profiles (optional)</label>
+              <label for="default_max_profiles">Default Max Profiles (optional)</label>
               <input id="default_max_profiles" name="default_max_profiles" type="number" min="1" value="{{ setup_form.default_max_profiles }}" />
             </div>
           </div>
@@ -306,10 +456,10 @@ INDEX_HTML = """
         <div class="actions">
           <button type="submit">Save Setup</button>
           {% if profile %}
-            <a href="{{ url_for('index') }}" class="secondary" style="display:inline-block;padding:10px 14px;border-radius:10px;border:1px solid #c3d7ea;color:#1e3a5f;">Cancel</a>
+            <a class="btn alt" href="{{ url_for('index') }}">Cancel</a>
           {% endif %}
         </div>
-        <div class="muted">Storage path: {{ storage_mode }}</div>
+        <p class="muted">Storage: {{ storage_mode }}</p>
       </form>
       {% endif %}
     </section>
@@ -331,8 +481,10 @@ INDEX_HTML = """
           {% for run in runs %}
           <tr>
             <td>#{{ run.id }}</td>
-            <td>{{ run.started_at }}</td>
-            <td>{{ run.status }}</td>
+            <td>{{ run.started_at_display }}</td>
+            <td>
+              <span class="badge {{ run.status }}">{{ run.status }}</span>
+            </td>
             <td>{{ run.lead_count if run.lead_count is not none else '-' }}</td>
             <td>
               {% if run.output_filename %}
@@ -348,34 +500,34 @@ INDEX_HTML = """
         </tbody>
       </table>
       {% else %}
-      <div class="sub">No reports yet. Click "Run Report Now" after setup.</div>
+      <p class="muted">No reports yet. Save setup, then click "Run Report Now".</p>
       {% endif %}
     </section>
 
     {% if preview %}
-      <section class="card">
-        <h2>Latest Results Preview</h2>
-        <table>
-          <thead>
-            <tr>
-              <th>Instagram</th>
-              <th>Podcast URL(s)</th>
-              <th>Monthly Listeners (Est.)</th>
-              <th>Email</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for row in preview %}
-            <tr>
-              <td>{{ row.instagram_handle }}</td>
-              <td>{{ '; '.join(row.podcast_urls) }}</td>
-              <td>{{ row.estimated_monthly_listeners }}</td>
-              <td>{{ row.email or '' }}</td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </section>
+    <section class="card">
+      <h2>Latest Results Preview</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Instagram</th>
+            <th>Podcast URL(s)</th>
+            <th>Monthly Listeners (est.)</th>
+            <th>Email</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in preview %}
+          <tr>
+            <td>{{ row.instagram_handle }}</td>
+            <td>{{ '; '.join(row.podcast_urls) }}</td>
+            <td>{{ row.estimated_monthly_listeners }}</td>
+            <td>{{ row.email or '' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
     {% endif %}
   </div>
 </body>
@@ -423,10 +575,20 @@ def _to_float(raw: str, label: str, minimum: float = 0.0) -> float:
     return value
 
 
+def _format_iso(value: str | None) -> str:
+    if not value:
+        return "-"
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return dt.strftime("%b %d, %Y %I:%M %p")
+    except ValueError:
+        return value
+
+
 def _default_setup_form(profile: dict | None = None) -> dict[str, str]:
     if profile is None:
         return {
-            "name": "My Lead Scrubber",
+            "name": "My Workspace",
             "business_account_id": "",
             "access_token": "",
             "graph_version": "v21.0",
@@ -502,19 +664,37 @@ def _render_page(
 ):
     profile = get_active_profile()
     runs = list_runs(limit=50)
+    runs_view = []
+    for run in runs:
+        item = dict(run)
+        item["started_at_display"] = _format_iso(run.get("started_at"))
+        if run.get("status") not in {"success", "failed", "running"}:
+            item["status"] = "running"
+        runs_view.append(item)
+
+    total_runs = len(runs)
+    success_runs = len([row for row in runs if row.get("status") == "success"])
+    last_success = next((row for row in runs if row.get("status") == "success"), None)
+    last_report_at = _format_iso(last_success.get("completed_at")) if last_success else "-"
+
     effective_show_setup = profile is None if show_setup_form is None else show_setup_form
     storage_mode = f"ephemeral ({db_path()})" if os.getenv("VERCEL") == "1" else str(db_path())
 
     return render_template_string(
         INDEX_HTML,
         profile=profile,
-        runs=runs,
+        runs=runs_view,
         message=message,
         error=error,
         preview=preview,
         setup_form=setup_form or _default_setup_form(profile),
         show_setup_form=effective_show_setup,
         storage_mode=storage_mode,
+        stats={
+            "total_runs": total_runs,
+            "success_runs": success_runs,
+            "last_report_at": last_report_at,
+        },
     )
 
 
@@ -569,7 +749,7 @@ def create_app() -> Flask:
                 default_lookback_days=_to_int(form["default_lookback_days"], "Default lookback days", minimum=1),
                 default_max_profiles=_to_optional_int(form["default_max_profiles"], "Default max profiles", minimum=1),
             )
-            return _render_page(message="Setup saved. You can now run reports.", show_setup_form=False)
+            return _render_page(message="Setup saved. You can run reports now.", show_setup_form=False)
         except Exception as err:  # noqa: BLE001
             return _render_page(error=str(err), setup_form=form, show_setup_form=True)
 
