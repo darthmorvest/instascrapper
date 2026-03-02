@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import os
+import re
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
+import requests
 from flask import Flask, abort, render_template_string, request, send_from_directory, url_for
 
 from .config import build_settings
@@ -406,12 +409,12 @@ INDEX_HTML = """
             <input id="name" name="name" value="{{ setup_form.name }}" required />
           </div>
           <div>
-            <label for="business_account_id">Instagram Business Account ID</label>
-            <input id="business_account_id" name="business_account_id" value="{{ setup_form.business_account_id }}" required />
+            <label for="business_account_id">Instagram Business Account ID (numeric)</label>
+            <input id="business_account_id" name="business_account_id" value="{{ setup_form.business_account_id }}" placeholder="1784..." required />
           </div>
           <div>
             <label for="access_token">Instagram Access Token</label>
-            <input id="access_token" name="access_token" value="{{ setup_form.access_token }}" required />
+            <input id="access_token" name="access_token" value="{{ setup_form.access_token }}" placeholder="Paste raw token only" required />
           </div>
         </div>
 
@@ -585,6 +588,113 @@ def _format_iso(value: str | None) -> str:
         return value
 
 
+def _sanitize_access_token(raw: str) -> str:
+    token = raw.strip().strip("\"").strip("'")
+    if not token:
+        return token
+
+    if token.lower().startswith("bearer "):
+        token = token.split(" ", 1)[1].strip()
+
+    if token.startswith("http://") or token.startswith("https://"):
+        parsed = urlparse(token)
+        query_token = parse_qs(parsed.query).get("access_token", [None])[0]
+        if query_token:
+            token = query_token.strip()
+
+    if "access_token=" in token:
+        query_like = token.replace("?", "&")
+        query_token = parse_qs(query_like).get("access_token", [None])[0]
+        if query_token:
+            token = query_token.strip()
+
+    if token.startswith("access_token="):
+        token = token.split("=", 1)[1].strip()
+
+    return token
+
+
+def _sanitize_business_account_id(raw: str) -> str:
+    value = raw.strip().strip("\"").strip("'")
+    if value.startswith("@"):
+        value = value[1:]
+    return value
+
+
+def _extract_error_code(text: str) -> int | None:
+    match = re.search(r"[\"']code[\"']\s*:\s*(\d+)", text)
+    if match:
+        return int(match.group(1))
+    return None
+
+
+def _friendly_api_error_text(text: str) -> str:
+    lowered = text.lower()
+    code = _extract_error_code(text)
+
+    if code == 190 or "invalid oauth access token" in lowered:
+        return (
+            "Instagram rejected the access token. Paste only the raw token value "
+            "(no 'Bearer', no quotes, no 'access_token=' prefix), then save setup again."
+        )
+
+    if code in {10, 200} or "permission" in lowered:
+        return (
+            "Token is missing required permissions. Regenerate it with Instagram "
+            "Graph permissions for reading media/comments."
+        )
+
+    if "unsupported get request" in lowered or "unknown path components" in lowered:
+        return (
+            "Instagram Business Account ID appears invalid for this token. "
+            "Use the numeric IG Business Account ID (example: 1784...)."
+        )
+
+    return text
+
+
+def _validate_setup_credentials(
+    *,
+    access_token: str,
+    business_account_id: str,
+    graph_version: str,
+) -> None:
+    if not business_account_id.isdigit():
+        raise ValueError(
+            "Instagram Business Account ID must be numeric only (example: 1784...). "
+            "Use Workspace Name for text labels like 'FamilyTeams'."
+        )
+
+    base_url = f"https://graph.facebook.com/{graph_version}"
+    timeout_seconds = 15
+
+    try:
+        token_check = requests.get(
+            f"{base_url}/me",
+            params={"access_token": access_token},
+            timeout=timeout_seconds,
+        )
+        token_payload = token_check.json()
+    except requests.RequestException as err:
+        raise ValueError(f"Could not reach Instagram API to validate token: {err}") from err
+
+    if "error" in token_payload:
+        raise ValueError(_friendly_api_error_text(str(token_payload["error"])))
+
+    try:
+        account_check = requests.get(
+            f"{base_url}/{business_account_id}",
+            params={"fields": "id", "access_token": access_token},
+            timeout=timeout_seconds,
+        )
+        account_payload = account_check.json()
+    except requests.RequestException as err:
+        raise ValueError(f"Could not validate account ID against Instagram API: {err}") from err
+
+    if "error" in account_payload:
+        raise ValueError(_friendly_api_error_text(str(account_payload["error"])))
+
+
 def _default_setup_form(profile: dict | None = None) -> dict[str, str]:
     if profile is None:
         return {
@@ -634,8 +744,8 @@ def _bootstrap_profile_from_env_if_missing() -> None:
     if get_active_profile() is not None:
         return
 
-    access_token = os.getenv("IG_ACCESS_TOKEN", "").strip()
-    business_account_id = os.getenv("IG_BUSINESS_ACCOUNT_ID", "").strip()
+    access_token = _sanitize_access_token(os.getenv("IG_ACCESS_TOKEN", ""))
+    business_account_id = _sanitize_business_account_id(os.getenv("IG_BUSINESS_ACCOUNT_ID", ""))
     if not access_token or not business_account_id:
         return
 
@@ -712,8 +822,8 @@ def create_app() -> Flask:
     def setup():
         form = {
             "name": request.form.get("name", "").strip(),
-            "business_account_id": request.form.get("business_account_id", "").strip(),
-            "access_token": request.form.get("access_token", "").strip(),
+            "business_account_id": _sanitize_business_account_id(request.form.get("business_account_id", "")),
+            "access_token": _sanitize_access_token(request.form.get("access_token", "")),
             "graph_version": request.form.get("graph_version", "v21.0").strip() or "v21.0",
             "timeout_seconds": request.form.get("timeout_seconds", "25").strip() or "25",
             "retry_count": request.form.get("retry_count", "3").strip() or "3",
@@ -731,6 +841,17 @@ def create_app() -> Flask:
                 raise ValueError("Instagram Business Account ID is required")
             if not form["access_token"]:
                 raise ValueError("Instagram access token is required")
+            if not form["business_account_id"].isdigit():
+                raise ValueError(
+                    "Instagram Business Account ID must be numeric only (example: 1784...). "
+                    "Use Workspace Name for labels like 'FamilyTeams'."
+                )
+
+            _validate_setup_credentials(
+                access_token=form["access_token"],
+                business_account_id=form["business_account_id"],
+                graph_version=form["graph_version"],
+            )
 
             upsert_active_profile(
                 name=form["name"],
@@ -801,7 +922,8 @@ def create_app() -> Flask:
             return _render_page(message=message, preview=records[:25], show_setup_form=False)
         except Exception as err:  # noqa: BLE001
             finish_run_failure(run_id, str(err))
-            return _render_page(error=f"Run failed: {err}", show_setup_form=False)
+            friendly = _friendly_api_error_text(str(err))
+            return _render_page(error=f"Run failed: {friendly}", show_setup_form=False)
 
     @app.get("/download/<path:filename>")
     def download_output(filename: str):
