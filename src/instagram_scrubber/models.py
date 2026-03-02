@@ -53,4 +53,8 @@ class LeadRecord:
     source_comment_text: str
     source_comment_timestamp: datetime | None
     notes: list[str]
-
+    engagement_comment_count: int = 1
+    lead_score: int | None = None
+    ai_fit_score: int | None = None
+    ai_summary: str | None = None
+    ai_outreach_angle: str | None = None

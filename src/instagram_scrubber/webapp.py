@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import sqlite3
+import json
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -10,18 +11,14 @@ from urllib.parse import parse_qs, urlparse
 import requests
 from flask import Flask, abort, render_template_string, request, send_from_directory, url_for
 
-from .config import build_settings
-from .exporters import write_csv
-from .instagram_api import InstagramGraphClient
-from .pipeline import build_leads
+from .run_engine import process_run_step
 from .storage import (
     create_profile,
     create_run,
     db_path,
     delete_profile,
-    finish_run_failure,
-    finish_run_success,
     get_profile,
+    get_run,
     init_db,
     list_profiles,
     list_runs,
@@ -332,6 +329,28 @@ INDEX_HTML = """
       border-color: #bfdbfe;
     }
 
+    .badge.queued {
+      background: #f8fafc;
+      color: #334155;
+      border-color: #cbd5e1;
+    }
+
+    .progress-wrap {
+      margin-top: 8px;
+      border: 1px solid #cfe0ea;
+      border-radius: 999px;
+      overflow: hidden;
+      background: #f8fbff;
+      height: 12px;
+    }
+
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(140deg, var(--accent), var(--accent-2));
+      width: 0%;
+      transition: width 240ms ease;
+    }
+
     a { color: #0f4f8a; text-decoration: none; }
     a:hover { text-decoration: underline; }
 
@@ -385,6 +404,24 @@ INDEX_HTML = """
     {% endif %}
     {% if error %}
       <section class="card"><div class="error">{{ error }}</div></section>
+    {% endif %}
+
+    {% if active_run and active_run.status in ['queued', 'running'] %}
+      <section class="card" id="run-status">
+        <h2>Run In Progress</h2>
+        <p class="muted">
+          Run #{{ active_run.id }} for <strong>{{ active_run.profile_name }}</strong>
+          {% if active_run.progress_message %}- {{ active_run.progress_message }}{% endif %}
+        </p>
+        <div class="progress-wrap">
+          {% set pct = ((active_run.progress_current / active_run.progress_total) * 100) if active_run.progress_total else 8 %}
+          <div class="progress-fill" style="width: {{ pct|round(0, 'floor') }}%;"></div>
+        </div>
+        <div class="actions">
+          <a class="btn alt" href="{{ url_for('index', active_run_id=active_run.id, auto=1, profile_id=run_form.profile_id) }}">Refresh Progress</a>
+          <span class="muted">{{ active_run.progress_current }} / {{ active_run.progress_total if active_run.progress_total else '?' }}</span>
+        </div>
+      </section>
     {% endif %}
 
     <section class="card" id="accounts">
@@ -460,7 +497,7 @@ INDEX_HTML = """
               <label for="profile_id">Account</label>
               <select id="profile_id" name="profile_id" required>
                 {% for p in profiles %}
-                  <option value="{{ p.id }}" {% if p.id == run_form.profile_id %}selected{% endif %}>{{ p.name }} ({{ p.business_account_id }})</option>
+                  <option value="{{ p.id }}" {% if (p.id|string) == (run_form.profile_id|string) %}selected{% endif %}>{{ p.name }} ({{ p.business_account_id }})</option>
                 {% endfor %}
               </select>
             </div>
@@ -540,6 +577,7 @@ INDEX_HTML = """
             <th>Started</th>
             <th>Lookback</th>
             <th>Status</th>
+            <th>Progress</th>
             <th>Report</th>
           </tr>
         </thead>
@@ -551,6 +589,15 @@ INDEX_HTML = """
             <td>{{ run.started_at_display }}</td>
             <td>{{ run.lookback_days }} days</td>
             <td><span class="badge {{ run.status }}">{{ run.status }}</span></td>
+            <td>
+              {% if run.status in ['running', 'queued'] %}
+                {{ run.progress_current }} / {{ run.progress_total if run.progress_total else '?' }}
+              {% elif run.progress_message %}
+                {{ run.progress_message }}
+              {% else %}
+                -
+              {% endif %}
+            </td>
             <td>
               {% if run.output_filename %}
                 <a href="{{ url_for('download_output', filename=run.output_filename) }}">Download CSV</a>
@@ -578,6 +625,9 @@ INDEX_HTML = """
             <th>Instagram</th>
             <th>Podcast URL(s)</th>
             <th>Monthly Listeners (est.)</th>
+            <th>Lead Score</th>
+            <th>AI Fit</th>
+            <th>AI Summary</th>
             <th>Email</th>
           </tr>
         </thead>
@@ -587,6 +637,9 @@ INDEX_HTML = """
             <td>{{ row.instagram_handle }}</td>
             <td>{{ '; '.join(row.podcast_urls) }}</td>
             <td>{{ row.estimated_monthly_listeners }}</td>
+            <td>{{ row.lead_score or '' }}</td>
+            <td>{{ row.ai_fit_score or '' }}</td>
+            <td>{{ row.ai_summary or '' }}</td>
             <td>{{ row.email or '' }}</td>
           </tr>
           {% endfor %}
@@ -595,22 +648,16 @@ INDEX_HTML = """
     </section>
     {% endif %}
   </div>
+  {% if auto_continue and active_run and active_run.status in ['queued', 'running'] %}
+  <script>
+    setTimeout(function () {
+      window.location.href = "{{ url_for('index', active_run_id=active_run.id, auto=1, profile_id=run_form.profile_id) }}";
+    }, 1200);
+  </script>
+  {% endif %}
 </body>
 </html>
 """
-
-
-def _slug(value: str) -> str:
-    keep = []
-    for char in value.lower().strip():
-        if char.isalnum():
-            keep.append(char)
-        elif char in (" ", "-", "_"):
-            keep.append("-")
-    slug = "".join(keep).strip("-")
-    while "--" in slug:
-        slug = slug.replace("--", "-")
-    return slug or "report"
 
 
 def _to_int(raw: str, label: str, minimum: int = 1) -> int:
@@ -844,6 +891,21 @@ def _default_run_form(selected_profile: dict | None) -> dict[str, str]:
     }
 
 
+def _preview_from_run(run: dict | None) -> list[dict] | None:
+    if run is None:
+        return None
+    raw = run.get("preview_json")
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if isinstance(parsed, list):
+        return parsed
+    return None
+
+
 def _render_page(
     *,
     message: str | None = None,
@@ -852,6 +914,8 @@ def _render_page(
     account_form: dict[str, str] | None = None,
     run_form: dict[str, str] | None = None,
     selected_profile_id: int | None = None,
+    active_run: dict | None = None,
+    auto_continue: bool = False,
 ):
     profiles = list_profiles()
     profile_by_id = {int(p["id"]): p for p in profiles}
@@ -868,7 +932,7 @@ def _render_page(
         item = dict(run)
         item["started_at_display"] = _format_iso(item.get("started_at"))
         status = item.get("status")
-        if status not in {"success", "failed", "running"}:
+        if status not in {"success", "failed", "running", "queued"}:
             item["status"] = "running"
         runs_view.append(item)
 
@@ -892,6 +956,8 @@ def _render_page(
         message=message,
         error=error,
         preview=preview,
+        active_run=active_run,
+        auto_continue=auto_continue,
         account_form=account_form,
         run_form=run_form,
         storage_mode=f"ephemeral ({db_path()})" if os.getenv("VERCEL") == "1" else str(db_path()),
@@ -913,7 +979,58 @@ def create_app() -> Flask:
     def index():
         selected_raw = request.args.get("profile_id", "").strip()
         selected_profile_id = int(selected_raw) if selected_raw.isdigit() else None
-        return _render_page(selected_profile_id=selected_profile_id)
+        active_run_raw = request.args.get("active_run_id", "").strip()
+        active_run_id = int(active_run_raw) if active_run_raw.isdigit() else None
+        auto = request.args.get("auto", "").strip() == "1"
+
+        active_run = None
+        message = None
+        error = None
+        preview = None
+        auto_continue = False
+
+        if active_run_id is not None:
+            try:
+                if auto:
+                    active_run = process_run_step(run_id=active_run_id, output_dir=OUTPUT_DIR)
+                else:
+                    active_run = get_run(active_run_id)
+            except Exception as err:  # noqa: BLE001
+                error = f"Run failed: {_friendly_api_error_text(str(err))}"
+                active_run = get_run(active_run_id)
+        elif not auto:
+            running = next(
+                (row for row in list_runs(limit=10) if row.get("status") in {"queued", "running"}),
+                None,
+            )
+            if running is not None:
+                active_run = running
+
+        if active_run is not None:
+            selected_profile_id = selected_profile_id or int(active_run["profile_id"])
+            status = str(active_run.get("status", "running"))
+            if status in {"queued", "running"}:
+                auto_continue = True
+            elif status == "success":
+                preview = _preview_from_run(active_run)
+                if active_run.get("output_filename"):
+                    message = (
+                        f"Report complete for <strong>{active_run.get('profile_name')}</strong>. "
+                        f"Found {active_run.get('lead_count', 0)} leads. "
+                        f"<a href='{url_for('download_output', filename=active_run['output_filename'])}'>Download CSV</a>."
+                    )
+            elif status == "failed":
+                error_text = str(active_run.get("error_message") or "Unknown error")
+                error = f"Run failed: {_friendly_api_error_text(error_text)}"
+
+        return _render_page(
+            selected_profile_id=selected_profile_id,
+            message=message,
+            error=error,
+            preview=preview,
+            active_run=active_run,
+            auto_continue=auto_continue,
+        )
 
     @app.post("/accounts")
     def create_account():
@@ -1029,50 +1146,46 @@ def create_app() -> Flask:
                 max_profiles=max_profiles,
             )
 
-            try:
-                settings = build_settings(
-                    access_token=str(profile["access_token"]),
-                    business_account_id=str(profile["business_account_id"]),
-                    graph_version=str(profile["graph_version"]),
-                    timeout_seconds=int(profile["timeout_seconds"]),
-                    retry_count=int(profile["retry_count"]),
-                    retry_backoff_seconds=float(profile["retry_backoff_seconds"]),
-                )
-                client = InstagramGraphClient(settings)
-                records = build_leads(
-                    client=client,
-                    media_limit=media_limit,
-                    comments_per_media=comments_per_media,
-                    lookback_days=lookback_days,
-                    max_profiles=max_profiles,
-                )
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                filename = f"report_{_slug(str(profile['name']))}_{timestamp}.csv"
-                output_path = write_csv(records, str(OUTPUT_DIR / filename))
-                finish_run_success(run_id, lead_count=len(records), output_filename=output_path.name)
+            run = process_run_step(run_id=run_id, output_dir=OUTPUT_DIR)
 
+            form["lookback_days"] = str(lookback_days)
+            form["media_limit"] = str(media_limit)
+            form["comments_per_media"] = str(comments_per_media)
+            form["max_profiles"] = "" if max_profiles is None else str(max_profiles)
+
+            status = str(run.get("status", "running"))
+            if status == "success":
+                preview = _preview_from_run(run)
                 message = (
-                    f"Report complete for <strong>{profile['name']}</strong>. Found {len(records)} leads. "
-                    f"<a href='{url_for('download_output', filename=output_path.name)}'>Download CSV</a>."
+                    f"Report complete for <strong>{profile['name']}</strong>. Found {run.get('lead_count', 0)} leads. "
+                    f"<a href='{url_for('download_output', filename=run['output_filename'])}'>Download CSV</a>."
                 )
-                form["lookback_days"] = str(lookback_days)
-                form["media_limit"] = str(media_limit)
-                form["comments_per_media"] = str(comments_per_media)
-                form["max_profiles"] = "" if max_profiles is None else str(max_profiles)
                 return _render_page(
                     message=message,
-                    preview=records[:25],
+                    preview=preview,
                     run_form=form,
                     selected_profile_id=profile_id,
+                    active_run=run,
+                    auto_continue=False,
                 )
-            except Exception as err:  # noqa: BLE001
-                finish_run_failure(run_id, str(err))
-                friendly = _friendly_api_error_text(str(err))
+
+            if status == "failed":
+                friendly = _friendly_api_error_text(str(run.get("error_message") or "Unknown error"))
                 return _render_page(
                     error=f"Run failed: {friendly}",
                     run_form=form,
                     selected_profile_id=profile_id,
+                    active_run=run,
+                    auto_continue=False,
                 )
+
+            return _render_page(
+                message=f"Run queued for <strong>{profile['name']}</strong>. Processing in the background...",
+                run_form=form,
+                selected_profile_id=profile_id,
+                active_run=run,
+                auto_continue=True,
+            )
         except Exception as err:  # noqa: BLE001
             return _render_page(error=str(err), run_form=form)
 

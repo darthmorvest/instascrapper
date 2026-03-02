@@ -66,7 +66,8 @@ How it works:
 2. In **Run Report**, select which account to run
 3. Set **Lookback Days** for this run
 4. Click **Run Report Now**
-5. Download current/old reports from **Report History**
+5. The app processes in short background-safe steps (progress appears on page)
+6. Download current/old reports from **Report History**
 
 Defaults can be saved per account (media limit, comments per media, lookback days).
 
@@ -152,6 +153,11 @@ This app uses SQLite by default:
 
 For durable one-time setup + old report history, run this on VPS/Render/Railway or switch storage to a managed database.
 
+#### Timeout-safe runner on Vercel
+
+Report execution is chunked into resumable steps, so large runs do not need to finish in one function invocation.  
+If a run is still in progress, keep the tab open; the dashboard auto-refreshes and continues until complete.
+
 ## Required environment variables
 
 Required for CLI mode:
@@ -165,6 +171,13 @@ Optional:
 - `REQUEST_TIMEOUT_SECONDS` (default: `25`)
 - `REQUEST_RETRY_COUNT` (default: `3`)
 - `REQUEST_RETRY_BACKOFF_SECONDS` (default: `1.5`)
+- `RUN_STEP_BUDGET_SECONDS` (default: `7`) - per-request processing budget for queued runs
+- `RUN_MEDIA_BATCH_SIZE` (default: `2`) - media items processed per run step
+- `RUN_PROFILE_BATCH_SIZE` (default: `3`) - profiles enriched per run step
+- `RUN_AI_BATCH_SIZE` (default: `5`) - leads AI-scored per run step
+- `OPENAI_API_KEY` (optional) - enables deeper AI lead scoring/summaries
+- `OPENAI_MODEL` (optional, default `gpt-4.1-mini`)
+- `OPENAI_BASE_URL` (optional, default `https://api.openai.com/v1`)
 
 ## CSV columns
 
@@ -174,6 +187,11 @@ Optional:
 - `podcast_urls`
 - `estimated_monthly_listeners`
 - `estimate_confidence`
+- `lead_score`
+- `engagement_comment_count`
+- `ai_fit_score`
+- `ai_summary`
+- `ai_outreach_angle`
 - `email`
 - `website`
 - `source_media_permalink`

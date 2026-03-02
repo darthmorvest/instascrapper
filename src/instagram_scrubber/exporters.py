@@ -20,6 +20,11 @@ def write_csv(records: list[LeadRecord], output_path: str) -> Path:
                 "podcast_urls",
                 "estimated_monthly_listeners",
                 "estimate_confidence",
+                "lead_score",
+                "engagement_comment_count",
+                "ai_fit_score",
+                "ai_summary",
+                "ai_outreach_angle",
                 "email",
                 "website",
                 "source_media_permalink",
@@ -40,6 +45,11 @@ def write_csv(records: list[LeadRecord], output_path: str) -> Path:
                     "podcast_urls": ";".join(rec.podcast_urls),
                     "estimated_monthly_listeners": rec.estimated_monthly_listeners,
                     "estimate_confidence": rec.estimate_confidence,
+                    "lead_score": rec.lead_score,
+                    "engagement_comment_count": rec.engagement_comment_count,
+                    "ai_fit_score": rec.ai_fit_score,
+                    "ai_summary": rec.ai_summary or "",
+                    "ai_outreach_angle": rec.ai_outreach_angle or "",
                     "email": rec.email or "",
                     "website": rec.website or "",
                     "source_media_permalink": rec.source_media_permalink or "",
@@ -54,4 +64,3 @@ def write_csv(records: list[LeadRecord], output_path: str) -> Path:
             )
 
     return path
-

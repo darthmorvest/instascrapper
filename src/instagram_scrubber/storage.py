@@ -53,6 +53,10 @@ def init_db() -> None:
               started_at TEXT NOT NULL,
               completed_at TEXT,
               status TEXT NOT NULL,
+              phase TEXT NOT NULL DEFAULT 'queued',
+              progress_message TEXT,
+              progress_current INTEGER NOT NULL DEFAULT 0,
+              progress_total INTEGER NOT NULL DEFAULT 0,
               media_limit INTEGER NOT NULL,
               comments_per_media INTEGER NOT NULL,
               lookback_days INTEGER NOT NULL,
@@ -60,10 +64,33 @@ def init_db() -> None:
               lead_count INTEGER,
               output_filename TEXT,
               error_message TEXT,
+              state_json TEXT,
+              preview_json TEXT,
               FOREIGN KEY(profile_id) REFERENCES profiles(id) ON DELETE CASCADE
             );
             """
         )
+        _migrate_runs_table(conn)
+
+
+def _has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    return any(row["name"] == column for row in rows)
+
+
+def _migrate_runs_table(conn: sqlite3.Connection) -> None:
+    additions = [
+        ("phase", "TEXT NOT NULL DEFAULT 'queued'"),
+        ("progress_message", "TEXT"),
+        ("progress_current", "INTEGER NOT NULL DEFAULT 0"),
+        ("progress_total", "INTEGER NOT NULL DEFAULT 0"),
+        ("state_json", "TEXT"),
+        ("preview_json", "TEXT"),
+    ]
+    for column, definition in additions:
+        if _has_column(conn, "runs", column):
+            continue
+        conn.execute(f"ALTER TABLE runs ADD COLUMN {column} {definition}")
 
 
 def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
@@ -326,12 +353,18 @@ def create_run(
               profile_id,
               started_at,
               status,
+              phase,
+              progress_message,
+              progress_current,
+              progress_total,
               media_limit,
               comments_per_media,
               lookback_days,
-              max_profiles
+              max_profiles,
+              state_json,
+              preview_json
             )
-            VALUES (?, ?, 'running', ?, ?, ?, ?)
+            VALUES (?, ?, 'queued', 'queued', 'Queued', 0, 0, ?, ?, ?, ?, '{}', '[]')
             """,
             (
                 profile_id,
@@ -345,19 +378,116 @@ def create_run(
         return int(cursor.lastrowid)
 
 
-def finish_run_success(run_id: int, lead_count: int, output_filename: str) -> None:
+def get_run(run_id: int) -> dict[str, Any] | None:
+    with _connect() as conn:
+        row = conn.execute(
+            """
+            SELECT
+              runs.id,
+              runs.profile_id,
+              profiles.name AS profile_name,
+              runs.started_at,
+              runs.completed_at,
+              runs.status,
+              runs.phase,
+              runs.progress_message,
+              runs.progress_current,
+              runs.progress_total,
+              runs.media_limit,
+              runs.comments_per_media,
+              runs.lookback_days,
+              runs.max_profiles,
+              runs.lead_count,
+              runs.output_filename,
+              runs.error_message,
+              runs.state_json,
+              runs.preview_json
+            FROM runs
+            JOIN profiles ON profiles.id = runs.profile_id
+            WHERE runs.id = ?
+            """,
+            (run_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    return _row_to_dict(row)
+
+
+def update_run_progress(
+    run_id: int,
+    *,
+    status: str | None = None,
+    phase: str | None = None,
+    progress_message: str | None = None,
+    progress_current: int | None = None,
+    progress_total: int | None = None,
+    state_json: str | None = None,
+    preview_json: str | None = None,
+) -> None:
+    updates: list[str] = []
+    values: list[Any] = []
+
+    if status is not None:
+        updates.append("status = ?")
+        values.append(status)
+    if phase is not None:
+        updates.append("phase = ?")
+        values.append(phase)
+    if progress_message is not None:
+        updates.append("progress_message = ?")
+        values.append(progress_message[:1000])
+    if progress_current is not None:
+        updates.append("progress_current = ?")
+        values.append(max(0, int(progress_current)))
+    if progress_total is not None:
+        updates.append("progress_total = ?")
+        values.append(max(0, int(progress_total)))
+    if state_json is not None:
+        updates.append("state_json = ?")
+        values.append(state_json)
+    if preview_json is not None:
+        updates.append("preview_json = ?")
+        values.append(preview_json)
+
+    if not updates:
+        return
+
+    values.append(run_id)
+    with _connect() as conn:
+        conn.execute(
+            f"""
+            UPDATE runs
+            SET {", ".join(updates)}
+            WHERE id = ?
+            """,
+            tuple(values),
+        )
+
+
+def finish_run_success(
+    run_id: int,
+    lead_count: int,
+    output_filename: str,
+    *,
+    preview_json: str | None = None,
+) -> None:
     with _connect() as conn:
         conn.execute(
             """
             UPDATE runs
             SET
               status = 'success',
+              phase = 'completed',
+              progress_message = 'Completed',
+              progress_current = CASE WHEN progress_total > 0 THEN progress_total ELSE progress_current END,
               lead_count = ?,
               output_filename = ?,
+              state_json = '{}',
+              preview_json = COALESCE(?, preview_json),
               completed_at = ?
             WHERE id = ?
             """,
-            (lead_count, output_filename, _utc_now_iso(), run_id),
+            (lead_count, output_filename, preview_json, _utc_now_iso(), run_id),
         )
 
 
@@ -368,11 +498,14 @@ def finish_run_failure(run_id: int, error_message: str) -> None:
             UPDATE runs
             SET
               status = 'failed',
+              phase = 'failed',
+              progress_message = ?,
               error_message = ?,
+              state_json = '{}',
               completed_at = ?
             WHERE id = ?
             """,
-            (error_message[:2000], _utc_now_iso(), run_id),
+            (error_message[:500], error_message[:2000], _utc_now_iso(), run_id),
         )
 
 
@@ -387,13 +520,19 @@ def list_runs(limit: int = 50) -> list[dict[str, Any]]:
               runs.started_at,
               runs.completed_at,
               runs.status,
+              runs.phase,
+              runs.progress_message,
+              runs.progress_current,
+              runs.progress_total,
               runs.media_limit,
               runs.comments_per_media,
               runs.lookback_days,
               runs.max_profiles,
               runs.lead_count,
               runs.output_filename,
-              runs.error_message
+              runs.error_message,
+              runs.state_json,
+              runs.preview_json
             FROM runs
             JOIN profiles ON profiles.id = runs.profile_id
             ORDER BY runs.id DESC
