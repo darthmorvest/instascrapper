@@ -2226,6 +2226,15 @@ def create_app() -> Flask:
                 )
             )
 
+        print(
+            "[meta_oauth_start]",
+            {
+                "client_id": client_id,
+                "redirect_uri": _meta_redirect_uri(),
+            },
+            flush=True,
+        )
+
         state = secrets.token_urlsafe(24)
         session["meta_oauth_state"] = state
 
