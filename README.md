@@ -149,8 +149,9 @@ Optional Meta OAuth (recommended for marketer-friendly onboarding):
 - `META_APP_ID`
 - `META_APP_SECRET`
 - `META_REDIRECT_URI` (optional; defaults to `/connect/meta/callback` absolute URL)
+- `META_CONFIG_ID` (recommended for Facebook Login for Business configuration flow)
 - `META_GRAPH_VERSION` (optional; default from `IG_GRAPH_VERSION`)
-- `META_OAUTH_SCOPES` (optional override)
+- `META_OAUTH_SCOPES` (optional override when not using `META_CONFIG_ID`)
 
 #### 3.1) Supabase managed database (recommended)
 
@@ -211,8 +212,9 @@ Optional:
 - `APP_SECRET_KEY` (required for secure web login sessions)
 - `META_APP_ID` / `META_APP_SECRET` (optional; enables Meta OAuth account connection)
 - `META_REDIRECT_URI` (optional callback URL override)
+- `META_CONFIG_ID` (recommended for Facebook Login for Business)
 - `META_GRAPH_VERSION` (optional; defaults to IG graph version)
-- `META_OAUTH_SCOPES` (optional override)
+- `META_OAUTH_SCOPES` (optional override when `META_CONFIG_ID` is not set)
 
 ### Enable AI enrichment in Vercel
 

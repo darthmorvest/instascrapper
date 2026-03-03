@@ -703,7 +703,7 @@ INDEX_HTML = """
       {% if meta_oauth_enabled %}
         <div class="oauth-tip">Meta Login is active. Team members can connect client Instagram accounts with one click and no manual token handling.</div>
       {% else %}
-        <div class="oauth-tip">Meta Login is not enabled on this deployment yet. Add `META_APP_ID`, `META_APP_SECRET`, and `META_REDIRECT_URI` in Vercel to remove manual API setup.</div>
+        <div class="oauth-tip">Meta Login is not enabled on this deployment yet. Add `META_APP_ID`, `META_APP_SECRET`, and `META_REDIRECT_URI` in Vercel. For Facebook Login for Business, also set `META_CONFIG_ID`.</div>
       {% endif %}
     </section>
 
@@ -1697,6 +1697,10 @@ def _meta_graph_version() -> str:
     return os.getenv("META_GRAPH_VERSION", os.getenv("IG_GRAPH_VERSION", "v21.0")).strip() or "v21.0"
 
 
+def _meta_config_id() -> str:
+    return os.getenv("META_CONFIG_ID", "").strip()
+
+
 def _meta_redirect_uri() -> str:
     configured = os.getenv("META_REDIRECT_URI", "").strip()
     if configured:
@@ -1707,7 +1711,7 @@ def _meta_redirect_uri() -> str:
 def _meta_scopes() -> str:
     return os.getenv(
         "META_OAUTH_SCOPES",
-        "public_profile,email,pages_show_list,pages_read_engagement,instagram_basic,instagram_manage_comments,business_management",
+        "public_profile,pages_show_list,instagram_basic,instagram_manage_comments,business_management",
     ).strip()
 
 
@@ -2209,7 +2213,8 @@ def create_app() -> Flask:
                     "index",
                     message=(
                         "Meta Login is not configured yet. Add META_APP_ID, META_APP_SECRET, "
-                        "and META_REDIRECT_URI in Vercel Project Settings -> Environment Variables."
+                        "and META_REDIRECT_URI in Vercel Project Settings -> Environment Variables. "
+                        "For Facebook Login for Business, also set META_CONFIG_ID."
                     ),
                 )
             )
@@ -2243,8 +2248,13 @@ def create_app() -> Flask:
             "redirect_uri": _meta_redirect_uri(),
             "state": state,
             "response_type": "code",
-            "scope": _meta_scopes(),
         }
+        config_id = _meta_config_id()
+        if config_id:
+            # Facebook Login for Business recommends configuration-based OAuth.
+            params["config_id"] = config_id
+        else:
+            params["scope"] = _meta_scopes()
         auth_url = f"https://www.facebook.com/dialog/oauth?{urlencode(params)}"
         return redirect(auth_url)
 
@@ -2259,6 +2269,8 @@ def create_app() -> Flask:
                 "client_id_length": len(client_id),
                 "redirect_uri": _meta_redirect_uri(),
                 "graph_version": _meta_graph_version(),
+                "config_id_configured": bool(_meta_config_id()),
+                "oauth_scopes": _meta_scopes(),
             }
         )
 
@@ -2271,7 +2283,8 @@ def create_app() -> Flask:
                     "index",
                     message=(
                         "Meta Login is not configured yet. Add META_APP_ID, META_APP_SECRET, "
-                        "and META_REDIRECT_URI in Vercel Project Settings -> Environment Variables."
+                        "and META_REDIRECT_URI in Vercel Project Settings -> Environment Variables. "
+                        "For Facebook Login for Business, also set META_CONFIG_ID."
                     ),
                 )
             )
