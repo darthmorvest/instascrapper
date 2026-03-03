@@ -64,10 +64,11 @@ How it works:
 
 1. Add one or more Instagram account profiles (`label + account ID + access token`)
 2. In **Run Report**, select which account to run
-3. Set **Lookback Days** and **Posts to Scan** for this run
-4. Click **Run Report Now**
-5. The app processes in short background-safe steps (live progress updates in-page, without full-page refresh loops)
-6. Download current/old reports from **Report History**
+3. Optionally choose specific posts (multi-select) to scan **all comments** on those posts.
+4. Or run on recent posts by choosing dropdown values for lookback, posts to scan, comments/post, and lead cap.
+5. Click **Run Report Now**.
+6. The app processes in short background-safe steps (live progress updates in-page, without full-page refresh loops).
+7. Download current/old reports from **Report History**.
 
 Defaults can be saved per account (media limit, comments per media, lookback days).
 

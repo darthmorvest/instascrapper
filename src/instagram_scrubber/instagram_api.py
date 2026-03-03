@@ -4,6 +4,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 import requests
 
@@ -50,6 +51,19 @@ class InstagramGraphClient:
         raise RuntimeError(f"Request failed for {path}: {last_error}")
 
     def _request_next_page(self, next_url: str) -> dict[str, Any]:
+        parsed = urlparse(next_url)
+        query = parse_qs(parsed.query, keep_blank_values=True)
+        if "access_token" not in query:
+            query["access_token"] = [self.settings.access_token]
+            next_url = urlunparse(
+                parsed._replace(
+                    query=urlencode(
+                        [(k, v) for k, values in query.items() for v in values],
+                        doseq=True,
+                    )
+                )
+            )
+
         last_error: Exception | None = None
         for attempt in range(self.settings.retry_count + 1):
             try:
@@ -128,15 +142,51 @@ class InstagramGraphClient:
         except Exception:  # noqa: BLE001
             return None
 
-    def list_comments_for_media(self, media_id: str, comments_per_media: int) -> list[dict[str, Any]]:
+    def get_media_item(self, media_id: str) -> MediaItem:
+        try:
+            payload = self._request(media_id, params={"fields": "id,permalink,timestamp"})
+        except Exception:
+            return MediaItem(media_id=str(media_id), permalink=None, timestamp=None)
+        return MediaItem(
+            media_id=str(payload.get("id") or media_id),
+            permalink=payload.get("permalink"),
+            timestamp=self._parse_dt(payload.get("timestamp")),
+        )
+
+    def list_comments_page(
+        self,
+        media_id: str,
+        *,
+        page_limit: int = 100,
+        next_url: str | None = None,
+    ) -> tuple[list[dict[str, Any]], str | None]:
         fields = "id,text,timestamp,username,from,like_count"
+        if next_url:
+            payload = self._request_next_page(next_url)
+        else:
+            payload = self._request(
+                f"{media_id}/comments",
+                params={"fields": fields, "limit": min(max(page_limit, 1), 100)},
+            )
+        comments = list(payload.get("data", []))
+        next_cursor = payload.get("paging", {}).get("next")
+        return (comments, next_cursor)
+
+    def list_comments_for_media(self, media_id: str, comments_per_media: int) -> list[dict[str, Any]]:
         comments: list[dict[str, Any]] = []
-        for comment in self._paginate(
-            initial_path=f"{media_id}/comments",
-            params={"fields": fields, "limit": min(max(comments_per_media, 1), 100)},
-        ):
-            comments.append(comment)
-            if len(comments) >= comments_per_media:
+        next_url: str | None = None
+        all_comments = comments_per_media <= 0
+        while True:
+            page, next_url = self.list_comments_page(
+                media_id,
+                page_limit=100,
+                next_url=next_url,
+            )
+            for comment in page:
+                comments.append(comment)
+                if not all_comments and len(comments) >= comments_per_media:
+                    return comments
+            if not next_url:
                 break
         return comments
 

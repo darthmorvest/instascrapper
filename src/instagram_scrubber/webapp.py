@@ -12,6 +12,8 @@ import requests
 from flask import Flask, Response, abort, jsonify, render_template_string, request, send_from_directory, url_for
 
 from .ai_enrichment import ai_enabled
+from .config import build_settings
+from .instagram_api import InstagramGraphClient
 from .run_engine import process_run_step
 from .storage import (
     create_profile,
@@ -457,7 +459,7 @@ INDEX_HTML = """
         <div class="actions">
           <a class="btn alt" href="{{ url_for('index', active_run_id=active_run.id, profile_id=run_form.profile_id) }}">Refresh Progress</a>
           <span class="muted" id="run-progress-count">{{ active_run.progress_current }} / {{ active_run.progress_total if active_run.progress_total else '?' }}</span>
-          <span class="muted">Scope: up to {{ active_run.media_limit }} posts, {{ active_run.comments_per_media }} comments/post</span>
+          <span class="muted">Scope: {{ active_run.posts_scope_display }}, {{ active_run.comments_scope_display }}</span>
         </div>
       </section>
     {% endif %}
@@ -541,28 +543,66 @@ INDEX_HTML = """
             </div>
             <div>
               <label for="lookback_days">Lookback Days</label>
-              <input id="lookback_days" name="lookback_days" type="number" min="1" value="{{ run_form.lookback_days }}" required />
+              <select id="lookback_days" name="lookback_days" required>
+                <option value="7" {% if run_form.lookback_days == '7' %}selected{% endif %}>7 days</option>
+                <option value="14" {% if run_form.lookback_days == '14' %}selected{% endif %}>14 days</option>
+                <option value="30" {% if run_form.lookback_days == '30' %}selected{% endif %}>30 days</option>
+                <option value="60" {% if run_form.lookback_days == '60' %}selected{% endif %}>60 days</option>
+                <option value="90" {% if run_form.lookback_days == '90' %}selected{% endif %}>90 days</option>
+                <option value="180" {% if run_form.lookback_days == '180' %}selected{% endif %}>180 days</option>
+              </select>
             </div>
             <div>
               <label for="media_limit">Posts to Scan</label>
-              <input id="media_limit" name="media_limit" type="number" min="1" value="{{ run_form.media_limit }}" />
-              <div class="muted">Current default is 25 posts per report.</div>
+              <select id="media_limit" name="media_limit">
+                <option value="5" {% if run_form.media_limit == '5' %}selected{% endif %}>5 posts</option>
+                <option value="10" {% if run_form.media_limit == '10' %}selected{% endif %}>10 posts</option>
+                <option value="25" {% if run_form.media_limit == '25' %}selected{% endif %}>25 posts</option>
+                <option value="50" {% if run_form.media_limit == '50' %}selected{% endif %}>50 posts</option>
+                <option value="100" {% if run_form.media_limit == '100' %}selected{% endif %}>100 posts</option>
+              </select>
+              <div class="muted">Used when no specific posts are selected below.</div>
             </div>
           </div>
 
-          <details>
-            <summary>Advanced Run Settings</summary>
-            <div class="form-grid">
-              <div>
-                <label for="comments_per_media">Comments per Media</label>
-                <input id="comments_per_media" name="comments_per_media" type="number" min="1" value="{{ run_form.comments_per_media }}" />
-              </div>
-              <div>
-                <label for="max_profiles">Max Profiles (optional)</label>
-                <input id="max_profiles" name="max_profiles" type="number" min="1" value="{{ run_form.max_profiles }}" />
-              </div>
+          <div class="form-grid">
+            <div>
+              <label for="selected_media_ids">Choose Specific Posts (optional)</label>
+              <select id="selected_media_ids" name="selected_media_ids" multiple size="8">
+                {% if media_options %}
+                  {% for m in media_options %}
+                    <option value="{{ m.id }}" {% if m.id in run_form.selected_media_ids %}selected{% endif %}>{{ m.label }}</option>
+                  {% endfor %}
+                {% else %}
+                  <option value="" disabled>No recent posts loaded. Select account and refresh.</option>
+                {% endif %}
+              </select>
+              <div class="muted">Select one or more posts to scan all comments on those exact posts.</div>
             </div>
-          </details>
+            <div>
+              <label for="comments_per_media">Comments per Post</label>
+              <select id="comments_per_media" name="comments_per_media">
+                <option value="all" {% if run_form.comments_per_media in ['all', '0'] %}selected{% endif %}>All comments</option>
+                <option value="50" {% if run_form.comments_per_media == '50' %}selected{% endif %}>First 50 comments</option>
+                <option value="100" {% if run_form.comments_per_media == '100' %}selected{% endif %}>First 100 comments</option>
+                <option value="200" {% if run_form.comments_per_media == '200' %}selected{% endif %}>First 200 comments</option>
+                <option value="500" {% if run_form.comments_per_media == '500' %}selected{% endif %}>First 500 comments</option>
+                <option value="1000" {% if run_form.comments_per_media == '1000' %}selected{% endif %}>First 1000 comments</option>
+              </select>
+              <div class="muted">Ignored when specific posts are selected: selected posts always run with all comments.</div>
+            </div>
+            <div>
+              <label for="max_profiles">Max Leads (optional)</label>
+              <select id="max_profiles" name="max_profiles">
+                <option value="" {% if run_form.max_profiles == '' %}selected{% endif %}>No cap</option>
+                <option value="25" {% if run_form.max_profiles == '25' %}selected{% endif %}>25</option>
+                <option value="50" {% if run_form.max_profiles == '50' %}selected{% endif %}>50</option>
+                <option value="100" {% if run_form.max_profiles == '100' %}selected{% endif %}>100</option>
+                <option value="250" {% if run_form.max_profiles == '250' %}selected{% endif %}>250</option>
+                <option value="500" {% if run_form.max_profiles == '500' %}selected{% endif %}>500</option>
+              </select>
+            </div>
+          </div>
 
           <div class="actions">
             <button type="submit">Run Report Now</button>
@@ -616,6 +656,7 @@ INDEX_HTML = """
             <th>Started</th>
             <th>Lookback</th>
             <th>Posts</th>
+            <th>Comments</th>
             <th>Status</th>
             <th>Progress</th>
             <th>Report</th>
@@ -628,7 +669,8 @@ INDEX_HTML = """
             <td>{{ run.profile_name }}</td>
             <td>{{ run.started_at_display }}</td>
             <td>{{ run.lookback_days }} days</td>
-            <td>{{ run.media_limit }}</td>
+            <td>{{ run.posts_scope_display }}</td>
+            <td>{{ run.comments_scope_display }}</td>
             <td><span class="badge {{ run.status }}">{{ run.status }}</span></td>
             <td>
               {% if run.status in ['running', 'queued'] %}
@@ -730,6 +772,18 @@ INDEX_HTML = """
     })();
   </script>
   {% endif %}
+  <script>
+    (function () {
+      const profileSelect = document.getElementById("profile_id");
+      if (!profileSelect) return;
+      profileSelect.addEventListener("change", function () {
+        const selected = profileSelect.value;
+        if (!selected) return;
+        const target = "{{ url_for('index') }}" + "?profile_id=" + encodeURIComponent(selected);
+        window.location.href = target;
+      });
+    })();
+  </script>
 </body>
 </html>
 """
@@ -752,6 +806,13 @@ def _to_optional_int(raw: str, label: str, minimum: int = 1) -> int | None:
     return _to_int(cleaned, label=label, minimum=minimum)
 
 
+def _parse_comments_limit(raw: str) -> int:
+    cleaned = raw.strip().lower()
+    if cleaned in {"all", "0"}:
+        return 0
+    return _to_int(cleaned, label="Comments per post", minimum=1)
+
+
 def _to_float(raw: str, label: str, minimum: float = 0.0) -> float:
     try:
         value = float(raw)
@@ -760,6 +821,53 @@ def _to_float(raw: str, label: str, minimum: float = 0.0) -> float:
     if value < minimum:
         raise ValueError(f"{label} must be at least {minimum}")
     return value
+
+
+def _parse_json_string_list(raw: str | None) -> list[str]:
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in parsed:
+        candidate = str(item).strip()
+        if not candidate or candidate in seen:
+            continue
+        seen.add(candidate)
+        out.append(candidate)
+    return out
+
+
+def _load_media_options(profile: dict | None) -> list[dict[str, str]]:
+    if profile is None:
+        return []
+    try:
+        settings = build_settings(
+            access_token=str(profile["access_token"]),
+            business_account_id=str(profile["business_account_id"]),
+            graph_version=str(profile["graph_version"]),
+            timeout_seconds=int(profile["timeout_seconds"]),
+            retry_count=int(profile["retry_count"]),
+            retry_backoff_seconds=float(profile["retry_backoff_seconds"]),
+        )
+        client = InstagramGraphClient(settings)
+        items = client.list_media(media_limit=50, lookback_days=None)
+    except Exception:
+        return []
+
+    options: list[dict[str, str]] = []
+    for item in items:
+        dt = item.timestamp.strftime("%Y-%m-%d") if item.timestamp else "Unknown date"
+        permalink = item.permalink or ""
+        short_ref = permalink.rstrip("/").split("/")[-1] if permalink else item.media_id[-8:]
+        label = f"{dt} - {short_ref} - {item.media_id}"
+        options.append({"id": str(item.media_id), "label": label})
+    return options
 
 
 def _format_iso(value: str | None) -> str:
@@ -948,6 +1056,14 @@ def _bootstrap_profile_from_env_if_missing() -> None:
 
 
 def _default_run_form(selected_profile: dict | None) -> dict[str, str]:
+    allowed_lookback = {"7", "14", "30", "60", "90", "180"}
+    allowed_media = {"5", "10", "25", "50", "100"}
+    allowed_comments = {"all", "50", "100", "200", "500", "1000"}
+    allowed_max_profiles = {"", "25", "50", "100", "250", "500"}
+
+    def _pick(raw: str, allowed: set[str], fallback: str) -> str:
+        return raw if raw in allowed else fallback
+
     if selected_profile is None:
         return {
             "profile_id": "",
@@ -955,14 +1071,24 @@ def _default_run_form(selected_profile: dict | None) -> dict[str, str]:
             "media_limit": "25",
             "comments_per_media": "200",
             "max_profiles": "",
+            "selected_media_ids": [],
         }
+
+    comments_default = str(selected_profile["default_comments_per_media"])
+    if comments_default == "0":
+        comments_default = "all"
 
     return {
         "profile_id": str(selected_profile["id"]),
-        "lookback_days": str(selected_profile["default_lookback_days"]),
-        "media_limit": str(selected_profile["default_media_limit"]),
-        "comments_per_media": str(selected_profile["default_comments_per_media"]),
-        "max_profiles": "" if selected_profile["default_max_profiles"] is None else str(selected_profile["default_max_profiles"]),
+        "lookback_days": _pick(str(selected_profile["default_lookback_days"]), allowed_lookback, "90"),
+        "media_limit": _pick(str(selected_profile["default_media_limit"]), allowed_media, "25"),
+        "comments_per_media": _pick(comments_default, allowed_comments, "200"),
+        "max_profiles": _pick(
+            "" if selected_profile["default_max_profiles"] is None else str(selected_profile["default_max_profiles"]),
+            allowed_max_profiles,
+            "",
+        ),
+        "selected_media_ids": [],
     }
 
 
@@ -979,6 +1105,25 @@ def _preview_from_run(run: dict | None) -> list[dict] | None:
     if isinstance(parsed, list):
         return parsed
     return None
+
+
+def _apply_run_scope_fields(item: dict) -> dict:
+    selected_media_ids = _parse_json_string_list(item.get("selected_media_ids_json"))
+    selected_count = len(selected_media_ids)
+    comments_per_media = int(item.get("comments_per_media") or 0)
+
+    if selected_count > 0:
+        item["posts_scope_display"] = f"{selected_count} selected"
+    else:
+        item["posts_scope_display"] = f"{int(item.get('media_limit') or 0)} recent"
+
+    if comments_per_media <= 0:
+        item["comments_scope_display"] = "all comments"
+    else:
+        item["comments_scope_display"] = f"up to {comments_per_media} comments/post"
+
+    item["selected_media_count"] = selected_count
+    return item
 
 
 def _render_page(
@@ -1009,6 +1154,7 @@ def _render_page(
         status = item.get("status")
         if status not in {"success", "failed", "running", "queued"}:
             item["status"] = "running"
+        item = _apply_run_scope_fields(item)
         runs_view.append(item)
 
     total_runs = len(runs)
@@ -1020,9 +1166,21 @@ def _render_page(
         run_form = _default_run_form(selected_profile)
     else:
         run_form = dict(run_form)
+        selected_media_ids = run_form.get("selected_media_ids")
+        if not isinstance(selected_media_ids, list):
+            run_form["selected_media_ids"] = []
 
     if account_form is None:
         account_form = _default_account_form()
+
+    active_run_view = None
+    if active_run is not None:
+        active_run_view = _apply_run_scope_fields(dict(active_run))
+
+    selected_profile_for_media = None
+    if selected_profile is not None:
+        selected_profile_for_media = get_profile(int(selected_profile["id"]))
+    media_options = _load_media_options(selected_profile_for_media)
 
     return render_template_string(
         INDEX_HTML,
@@ -1031,12 +1189,13 @@ def _render_page(
         message=message,
         error=error,
         preview=preview,
-        active_run=active_run,
+        active_run=active_run_view,
         auto_continue=auto_continue,
         is_ephemeral=is_ephemeral_storage(),
         ai_enabled=ai_enabled(),
         account_form=account_form,
         run_form=run_form,
+        media_options=media_options,
         storage_mode=storage_mode_label(),
         stats={
             "account_count": len(profiles),
@@ -1185,12 +1344,23 @@ def create_app() -> Flask:
 
     @app.post("/run")
     def run_scrub():
+        selected_media_ids_raw = request.form.getlist("selected_media_ids")
+        selected_media_ids: list[str] = []
+        seen_media: set[str] = set()
+        for raw_id in selected_media_ids_raw:
+            media_id = raw_id.strip()
+            if not media_id or media_id in seen_media:
+                continue
+            seen_media.add(media_id)
+            selected_media_ids.append(media_id)
+
         form = {
             "profile_id": request.form.get("profile_id", "").strip(),
             "lookback_days": request.form.get("lookback_days", "").strip(),
             "media_limit": request.form.get("media_limit", "").strip(),
             "comments_per_media": request.form.get("comments_per_media", "").strip(),
             "max_profiles": request.form.get("max_profiles", "").strip(),
+            "selected_media_ids": selected_media_ids,
         }
 
         try:
@@ -1209,9 +1379,14 @@ def create_app() -> Flask:
             if media_limit is None:
                 media_limit = int(profile["default_media_limit"])
 
-            comments_per_media = _to_optional_int(form["comments_per_media"], "Comments per media", minimum=1)
-            if comments_per_media is None:
+            if form["comments_per_media"]:
+                comments_per_media = _parse_comments_limit(form["comments_per_media"])
+            else:
                 comments_per_media = int(profile["default_comments_per_media"])
+
+            if selected_media_ids:
+                media_limit = len(selected_media_ids)
+                comments_per_media = 0
 
             max_profiles = _to_optional_int(form["max_profiles"], "Max profiles", minimum=1)
             if max_profiles is None:
@@ -1223,14 +1398,16 @@ def create_app() -> Flask:
                 comments_per_media=comments_per_media,
                 lookback_days=lookback_days,
                 max_profiles=max_profiles,
+                selected_media_ids=selected_media_ids,
             )
 
             run = process_run_step(run_id=run_id, output_dir=OUTPUT_DIR)
 
             form["lookback_days"] = str(lookback_days)
             form["media_limit"] = str(media_limit)
-            form["comments_per_media"] = str(comments_per_media)
+            form["comments_per_media"] = "all" if comments_per_media <= 0 else str(comments_per_media)
             form["max_profiles"] = "" if max_profiles is None else str(max_profiles)
+            form["selected_media_ids"] = selected_media_ids
 
             status = str(run.get("status", "running"))
             if status == "success":
@@ -1284,6 +1461,7 @@ def create_app() -> Flask:
 
         progress_total = int(run.get("progress_total") or 0)
         progress_current = int(run.get("progress_current") or 0)
+        selected_media_count = len(_parse_json_string_list(run.get("selected_media_ids_json")))
         if progress_total > 0:
             pct = max(1, min(100, int((progress_current / progress_total) * 100)))
         else:
@@ -1303,6 +1481,7 @@ def create_app() -> Flask:
                 "media_limit": int(run.get("media_limit") or 0),
                 "comments_per_media": int(run.get("comments_per_media") or 0),
                 "lookback_days": int(run.get("lookback_days") or 0),
+                "selected_media_count": selected_media_count,
                 "lead_count": int(run.get("lead_count") or 0),
                 "output_filename": run.get("output_filename"),
                 "error_message": run.get("error_message"),

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 from datetime import datetime, timezone
@@ -106,6 +107,7 @@ def _migrate_runs_table_sqlite(conn: sqlite3.Connection) -> None:
         ("progress_total", "INTEGER NOT NULL DEFAULT 0"),
         ("state_json", "TEXT"),
         ("preview_json", "TEXT"),
+        ("selected_media_ids_json", "TEXT NOT NULL DEFAULT '[]'"),
     ]
     for column, definition in additions:
         if _has_column_sqlite(conn, "runs", column):
@@ -121,6 +123,7 @@ def _migrate_runs_table_postgres(conn) -> None:
         ("progress_total", "INTEGER NOT NULL DEFAULT 0"),
         ("state_json", "TEXT"),
         ("preview_json", "TEXT"),
+        ("selected_media_ids_json", "TEXT NOT NULL DEFAULT '[]'"),
     ]
     for column, definition in additions:
         if _has_column_postgres(conn, "runs", column):
@@ -173,7 +176,8 @@ def init_db() -> None:
                   output_filename TEXT,
                   error_message TEXT,
                   state_json TEXT,
-                  preview_json TEXT
+                  preview_json TEXT,
+                  selected_media_ids_json TEXT NOT NULL DEFAULT '[]'
                 )
                 """,
             )
@@ -230,6 +234,7 @@ def init_db() -> None:
               error_message TEXT,
               state_json TEXT,
               preview_json TEXT,
+              selected_media_ids_json TEXT NOT NULL DEFAULT '[]',
               FOREIGN KEY(profile_id) REFERENCES profiles(id) ON DELETE CASCADE
             );
 
@@ -529,7 +534,21 @@ def create_run(
     comments_per_media: int,
     lookback_days: int,
     max_profiles: int | None,
+    selected_media_ids: list[str] | None = None,
 ) -> int:
+    if selected_media_ids:
+        deduped = []
+        seen: set[str] = set()
+        for media_id in selected_media_ids:
+            candidate = str(media_id).strip()
+            if not candidate or candidate in seen:
+                continue
+            seen.add(candidate)
+            deduped.append(candidate)
+        selected_media_ids_json = json.dumps(deduped, ensure_ascii=True)
+    else:
+        selected_media_ids_json = "[]"
+
     values = (
         profile_id,
         _utc_now_iso(),
@@ -537,6 +556,7 @@ def create_run(
         comments_per_media,
         lookback_days,
         max_profiles,
+        selected_media_ids_json,
     )
     with _connect() as conn:
         if using_postgres():
@@ -556,9 +576,10 @@ def create_run(
                   lookback_days,
                   max_profiles,
                   state_json,
-                  preview_json
+                  preview_json,
+                  selected_media_ids_json
                 )
-                VALUES (?, ?, 'queued', 'queued', 'Queued', 0, 0, ?, ?, ?, ?, '{}', '[]')
+                VALUES (?, ?, 'queued', 'queued', 'Queued', 0, 0, ?, ?, ?, ?, '{}', '[]', ?)
                 RETURNING id
                 """,
                 values,
@@ -583,9 +604,10 @@ def create_run(
               lookback_days,
               max_profiles,
               state_json,
-              preview_json
+              preview_json,
+              selected_media_ids_json
             )
-            VALUES (?, ?, 'queued', 'queued', 'Queued', 0, 0, ?, ?, ?, ?, '{}', '[]')
+            VALUES (?, ?, 'queued', 'queued', 'Queued', 0, 0, ?, ?, ?, ?, '{}', '[]', ?)
             """,
             values,
         )
@@ -616,7 +638,8 @@ def get_run(run_id: int) -> dict[str, Any] | None:
               runs.output_filename,
               runs.error_message,
               runs.state_json,
-              runs.preview_json
+              runs.preview_json,
+              runs.selected_media_ids_json
             FROM runs
             JOIN profiles ON profiles.id = runs.profile_id
             WHERE runs.id = ?
@@ -795,7 +818,8 @@ def list_runs(limit: int = 50) -> list[dict[str, Any]]:
               runs.output_filename,
               runs.error_message,
               runs.state_json,
-              runs.preview_json
+              runs.preview_json,
+              runs.selected_media_ids_json
             FROM runs
             JOIN profiles ON profiles.id = runs.profile_id
             ORDER BY runs.id DESC

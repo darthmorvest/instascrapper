@@ -6,6 +6,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from .ai_enrichment import ai_enabled, enrich_leads_with_ai
 from .config import build_settings
@@ -72,12 +73,48 @@ def _load_state(raw: str | None) -> dict[str, Any]:
 def _normalize_state(state: dict[str, Any]) -> dict[str, Any]:
     state.setdefault("media", [])
     state.setdefault("media_cursor", 0)
+    state.setdefault("active_media", None)
     state.setdefault("user_best", {})
     state.setdefault("usernames", [])
     state.setdefault("user_cursor", 0)
     state.setdefault("records", [])
     state.setdefault("ai_cursor", 0)
     return state
+
+
+def _parse_selected_media_ids(raw: Any) -> list[str]:
+    if not raw:
+        return []
+    if isinstance(raw, list):
+        source = raw
+    elif isinstance(raw, str):
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return []
+        if not isinstance(parsed, list):
+            return []
+        source = parsed
+    else:
+        return []
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for item in source:
+        candidate = str(item).strip()
+        if not candidate or candidate in seen:
+            continue
+        seen.add(candidate)
+        deduped.append(candidate)
+    return deduped
+
+
+def _strip_access_token_from_url(url: str | None) -> str | None:
+    if not url:
+        return None
+    parsed = urlsplit(url)
+    query_items = [(k, v) for (k, v) in parse_qsl(parsed.query, keep_blank_values=True) if k != "access_token"]
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, urlencode(query_items), parsed.fragment))
 
 
 def _share_sort_value(value: Any) -> int:
@@ -245,10 +282,14 @@ def process_run_step(
         while time.monotonic() - start < budget:
             if phase in {"queued", "collect_media"}:
                 if not state["media"]:
-                    media_items = client.list_media(
-                        media_limit=int(run["media_limit"]),
-                        lookback_days=int(run["lookback_days"]),
-                    )
+                    selected_media_ids = _parse_selected_media_ids(run.get("selected_media_ids_json"))
+                    if selected_media_ids:
+                        media_items = [client.get_media_item(media_id) for media_id in selected_media_ids]
+                    else:
+                        media_items = client.list_media(
+                            media_limit=int(run["media_limit"]),
+                            lookback_days=int(run["lookback_days"]),
+                        )
                     state["media"] = [
                         {
                             "media_id": item.media_id,
@@ -258,12 +299,18 @@ def process_run_step(
                         for item in media_items
                     ]
                     state["media_cursor"] = 0
+                    state["active_media"] = None
                     state["user_best"] = {}
                     phase = "collect_interactions"
+                    scope_note = (
+                        "Collecting all comments for selected posts"
+                        if selected_media_ids
+                        else "Collecting comments from selected media"
+                    )
                     update_run_progress(
                         run_id,
                         phase=phase,
-                        progress_message="Collecting comments from selected media",
+                        progress_message=scope_note,
                         progress_current=0,
                         progress_total=max(len(state["media"]), 1),
                         state_json=_serialize_state(state),
@@ -281,7 +328,10 @@ def process_run_step(
                 media = state.get("media", [])
                 cursor = int(state.get("media_cursor", 0))
                 total_media = len(media)
-                if cursor >= total_media:
+                comments_per_media = int(run.get("comments_per_media") or 0)
+                all_comments_mode = comments_per_media <= 0
+
+                if cursor >= total_media and not state.get("active_media"):
                     usernames = sorted(state.get("user_best", {}).keys())
                     if run.get("max_profiles") is not None:
                         usernames = usernames[: int(run["max_profiles"])]
@@ -299,47 +349,87 @@ def process_run_step(
                     run["phase"] = phase
                     continue
 
-                processed = 0
-                while cursor < total_media and processed < media_batch:
-                    media_item = media[cursor]
-                    media_id = str(media_item.get("media_id", ""))
-                    if media_id:
-                        share_count = client.get_media_share_count(media_id)
-                        comments = client.list_comments_for_media(
-                            media_id=media_id,
-                            comments_per_media=int(run["comments_per_media"]),
-                        )
-                        for comment in comments:
-                            commenter_username = (
-                                comment.get("username")
-                                or comment.get("from", {}).get("username")
-                                or ""
-                            ).strip()
-                            if not commenter_username:
-                                continue
-                            key = commenter_username.lower()
-                            candidate = {
-                                "commenter_username": commenter_username,
-                                "media_permalink": media_item.get("permalink"),
-                                "media_share_count": share_count,
-                                "comment_id": str(comment.get("id", "")),
-                                "comment_text": (comment.get("text") or "").strip(),
-                                "comment_timestamp": comment.get("timestamp"),
-                            }
-                            existing = state["user_best"].get(key)
-                            if existing is None:
-                                candidate["engagement_comment_count"] = 1
+                processed_media = 0
+                while cursor < total_media and processed_media < media_batch:
+                    active_media = state.get("active_media")
+                    if not active_media:
+                        media_item = media[cursor]
+                        media_id = str(media_item.get("media_id", ""))
+                        share_count = client.get_media_share_count(media_id) if media_id else None
+                        active_media = {
+                            "media_id": media_id,
+                            "permalink": media_item.get("permalink"),
+                            "share_count": share_count,
+                            "next_url": None,
+                            "processed_comments": 0,
+                        }
+                        state["active_media"] = active_media
+
+                    media_id = str(active_media.get("media_id", ""))
+                    if not media_id:
+                        cursor += 1
+                        state["media_cursor"] = cursor
+                        state["active_media"] = None
+                        processed_media += 1
+                        continue
+
+                    page_limit = 100
+                    comments, next_url = client.list_comments_page(
+                        media_id=media_id,
+                        page_limit=page_limit,
+                        next_url=active_media.get("next_url"),
+                    )
+                    for comment in comments:
+                        processed_comments = int(active_media.get("processed_comments", 0))
+                        if (not all_comments_mode) and processed_comments >= comments_per_media:
+                            break
+                        commenter_username = (
+                            comment.get("username")
+                            or comment.get("from", {}).get("username")
+                            or ""
+                        ).strip()
+                        if not commenter_username:
+                            continue
+                        key = commenter_username.lower()
+                        candidate = {
+                            "commenter_username": commenter_username,
+                            "media_permalink": active_media.get("permalink"),
+                            "media_share_count": active_media.get("share_count"),
+                            "comment_id": str(comment.get("id", "")),
+                            "comment_text": (comment.get("text") or "").strip(),
+                            "comment_timestamp": comment.get("timestamp"),
+                        }
+                        existing = state["user_best"].get(key)
+                        if existing is None:
+                            candidate["engagement_comment_count"] = 1
+                            state["user_best"][key] = candidate
+                        else:
+                            existing["engagement_comment_count"] = int(
+                                existing.get("engagement_comment_count", 1)
+                            ) + 1
+                            if _is_better_candidate(candidate, existing):
+                                candidate["engagement_comment_count"] = existing["engagement_comment_count"]
                                 state["user_best"][key] = candidate
-                            else:
-                                existing["engagement_comment_count"] = int(
-                                    existing.get("engagement_comment_count", 1)
-                                ) + 1
-                                if _is_better_candidate(candidate, existing):
-                                    candidate["engagement_comment_count"] = existing["engagement_comment_count"]
-                                    state["user_best"][key] = candidate
+                        active_media["processed_comments"] = int(active_media.get("processed_comments", 0)) + 1
+
+                    processed_comments = int(active_media.get("processed_comments", 0))
+                    reached_comment_limit = (not all_comments_mode) and processed_comments >= comments_per_media
+                    active_media["next_url"] = (
+                        None
+                        if reached_comment_limit
+                        else _strip_access_token_from_url(next_url)
+                    )
+                    state["active_media"] = active_media
+
+                    if active_media.get("next_url"):
+                        if time.monotonic() - start >= budget:
+                            break
+                        continue
+
                     cursor += 1
-                    processed += 1
                     state["media_cursor"] = cursor
+                    state["active_media"] = None
+                    processed_media += 1
                     if time.monotonic() - start >= budget:
                         break
 
