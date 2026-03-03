@@ -300,6 +300,14 @@ AUTH_HTML = """
         {% endif %}
       </article>
     </section>
+    <section class="card">
+      <p class="muted">
+        Legal:
+        <a href="{{ url_for('privacy_policy') }}" target="_blank" rel="noopener">Privacy Policy</a>
+        |
+        <a href="{{ url_for('terms_of_service') }}" target="_blank" rel="noopener">Terms of Service</a>
+      </p>
+    </section>
   </div>
 </body>
 </html>
@@ -1203,6 +1211,157 @@ INDEX_HTML = """
 </html>
 """
 
+LEGAL_HTML = """
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{{ title }}</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Space+Grotesk:wght@600;700&display=swap');
+
+    :root {
+      --bg-a: #f3f8ff;
+      --bg-b: #eaf4ff;
+      --panel: rgba(255, 255, 255, 0.9);
+      --line: rgba(148, 163, 184, 0.28);
+      --text: #0f2037;
+      --sub: #4f657f;
+      --accent: #0f6fa9;
+      --shadow: 0 14px 40px rgba(15, 23, 42, 0.1);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--text);
+      font-family: "Plus Jakarta Sans", "Avenir Next", sans-serif;
+      background:
+        radial-gradient(circle at 7% -5%, #dbeafe 0%, rgba(219, 234, 254, 0) 45%),
+        radial-gradient(circle at 95% 8%, #cffafe 0%, rgba(207, 250, 254, 0) 36%),
+        linear-gradient(180deg, var(--bg-a), var(--bg-b));
+      padding: 24px 12px 36px;
+    }
+
+    .wrap { max-width: 920px; margin: 0 auto; display: grid; gap: 12px; }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      padding: 18px;
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(16px);
+    }
+    .badge {
+      display: inline-flex;
+      border: 1px solid rgba(33, 146, 191, 0.34);
+      color: #0f4d7a;
+      border-radius: 999px;
+      padding: 6px 12px;
+      font-size: 0.74rem;
+      font-weight: 700;
+      letter-spacing: 0.42px;
+      text-transform: uppercase;
+      background: rgba(255, 255, 255, 0.84);
+    }
+    h1 {
+      margin: 10px 0 4px;
+      font-family: "Space Grotesk", "Plus Jakarta Sans", sans-serif;
+      font-size: 2rem;
+      letter-spacing: -0.02em;
+    }
+    h2 {
+      margin: 16px 0 8px;
+      font-family: "Space Grotesk", "Plus Jakarta Sans", sans-serif;
+      font-size: 1.04rem;
+    }
+    p, li { color: var(--sub); line-height: 1.55; font-size: 0.95rem; }
+    ul { margin: 8px 0; padding-left: 18px; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .meta { color: var(--sub); font-size: 0.86rem; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <section class="card">
+      <span class="badge">InstaScrapper Pro Legal</span>
+      <h1>{{ title }}</h1>
+      <p class="meta">Effective date: {{ effective_date }} | Contact: {{ contact_email }}</p>
+    </section>
+    <section class="card">
+      {{ body|safe }}
+      <p class="meta">Questions: <a href="mailto:{{ contact_email }}">{{ contact_email }}</a></p>
+    </section>
+  </main>
+</body>
+</html>
+"""
+
+PRIVACY_BODY_HTML = """
+<h2>Overview</h2>
+<p>InstaScrapper Pro provides analytics and reporting software for Instagram business accounts. This policy explains what data we collect, why we collect it, and how we protect it.</p>
+
+<h2>Information We Collect</h2>
+<ul>
+  <li>Account data you provide directly, including name, email, and workspace/team settings.</li>
+  <li>Instagram account data authorized by you through Meta Login and Instagram Graph API, such as media metadata and comments needed for report generation.</li>
+  <li>Usage and system logs required for security, troubleshooting, and service reliability.</li>
+</ul>
+
+<h2>How We Use Information</h2>
+<ul>
+  <li>Authenticate users and secure workspace access.</li>
+  <li>Generate lead reports from selected Instagram media and comments.</li>
+  <li>Store report history and account settings for ongoing use.</li>
+  <li>Improve product performance, reliability, and fraud prevention.</li>
+</ul>
+
+<h2>Data Sharing</h2>
+<p>We do not sell personal data. We share data only with service providers required to operate the platform (for example, hosting and database providers) and when legally required.</p>
+
+<h2>Data Retention</h2>
+<p>We retain data while your account is active or as needed for legal, security, and operational purposes. You may request deletion of your workspace data by contacting us.</p>
+
+<h2>Security</h2>
+<p>We use reasonable technical and organizational controls to protect data in transit and at rest. No online service can guarantee absolute security.</p>
+
+<h2>Your Rights</h2>
+<p>You may request access, correction, or deletion of your data, subject to applicable law and legitimate operational requirements.</p>
+
+<h2>Policy Updates</h2>
+<p>We may update this policy periodically. Material updates will be reflected by a revised effective date on this page.</p>
+"""
+
+TERMS_BODY_HTML = """
+<h2>Acceptance of Terms</h2>
+<p>By using InstaScrapper Pro, you agree to these terms and to comply with Meta and Instagram platform policies.</p>
+
+<h2>Permitted Use</h2>
+<ul>
+  <li>You must have authority to connect and analyze each Instagram account you add.</li>
+  <li>You are responsible for lawful use of exported report data.</li>
+  <li>You may not use the service for spam, abuse, or policy-violating activity.</li>
+</ul>
+
+<h2>Accounts and Security</h2>
+<p>You are responsible for maintaining the confidentiality of login credentials and for activity under your account.</p>
+
+<h2>Third-Party Platforms</h2>
+<p>The service depends on third-party APIs, including Meta and Instagram. Availability and data access may change based on platform rules and permissions.</p>
+
+<h2>Disclaimer</h2>
+<p>The service is provided on an \"as is\" and \"as available\" basis. We do not guarantee uninterrupted access or specific business outcomes.</p>
+
+<h2>Limitation of Liability</h2>
+<p>To the maximum extent permitted by law, InstaScrapper Pro is not liable for indirect, incidental, special, consequential, or punitive damages.</p>
+
+<h2>Changes</h2>
+<p>We may update these terms from time to time. Continued use after updates constitutes acceptance of the revised terms.</p>
+"""
+
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -1783,6 +1942,28 @@ def create_app() -> Flask:
     )
 
     init_db()
+    legal_contact_email = os.getenv("LEGAL_CONTACT_EMAIL", "privacy@instascrapper.com").strip() or "privacy@instascrapper.com"
+    legal_effective_date = os.getenv("LEGAL_EFFECTIVE_DATE", "March 3, 2026").strip() or "March 3, 2026"
+
+    @app.get("/privacy")
+    def privacy_policy():
+        return render_template_string(
+            LEGAL_HTML,
+            title="Privacy Policy",
+            effective_date=legal_effective_date,
+            contact_email=legal_contact_email,
+            body=PRIVACY_BODY_HTML,
+        )
+
+    @app.get("/terms")
+    def terms_of_service():
+        return render_template_string(
+            LEGAL_HTML,
+            title="Terms of Service",
+            effective_date=legal_effective_date,
+            contact_email=legal_contact_email,
+            body=TERMS_BODY_HTML,
+        )
 
     @app.get("/")
     @_require_auth
