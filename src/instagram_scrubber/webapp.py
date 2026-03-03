@@ -1684,7 +1684,13 @@ def _is_placeholder_credential(value: str) -> bool:
 
 
 def _meta_oauth_enabled() -> bool:
-    return bool(os.getenv("META_APP_ID", "").strip() and os.getenv("META_APP_SECRET", "").strip())
+    return bool(_meta_client_id() and os.getenv("META_APP_SECRET", "").strip())
+
+
+def _meta_client_id() -> str:
+    raw = os.getenv("META_APP_ID", "").strip()
+    # Keep only digits so accidental quotes/whitespace/non-digit chars do not break OAuth.
+    return "".join(ch for ch in raw if ch.isdigit())
 
 
 def _meta_graph_version() -> str:
@@ -2208,19 +2214,44 @@ def create_app() -> Flask:
                 )
             )
 
+        client_id = _meta_client_id()
+        if len(client_id) < 8:
+            return redirect(
+                url_for(
+                    "index",
+                    error=(
+                        "Meta Login configuration error: META_APP_ID is invalid. "
+                        "Set META_APP_ID to your numeric Meta App ID."
+                    ),
+                )
+            )
+
         state = secrets.token_urlsafe(24)
         session["meta_oauth_state"] = state
 
         params = {
-            "client_id": os.getenv("META_APP_ID", "").strip(),
+            "client_id": client_id,
             "redirect_uri": _meta_redirect_uri(),
             "state": state,
             "response_type": "code",
             "scope": _meta_scopes(),
         }
-        graph_version = _meta_graph_version()
-        auth_url = f"https://www.facebook.com/{graph_version}/dialog/oauth?{urlencode(params)}"
+        auth_url = f"https://www.facebook.com/dialog/oauth?{urlencode(params)}"
         return redirect(auth_url)
+
+    @app.get("/connect/meta/debug")
+    @_require_auth
+    def meta_connect_debug():
+        client_id = _meta_client_id()
+        return jsonify(
+            {
+                "meta_oauth_enabled": _meta_oauth_enabled(),
+                "client_id": client_id,
+                "client_id_length": len(client_id),
+                "redirect_uri": _meta_redirect_uri(),
+                "graph_version": _meta_graph_version(),
+            }
+        )
 
     @app.get("/connect/meta/callback")
     @_require_auth
