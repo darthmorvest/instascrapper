@@ -195,6 +195,15 @@ Optional:
 - `OPENAI_MODEL` (optional, default `gpt-4.1-mini`)
 - `OPENAI_BASE_URL` (optional, default `https://api.openai.com/v1`)
 
+### Enable AI enrichment in Vercel
+
+1. Vercel -> Project Settings -> Environment Variables
+2. Add `OPENAI_API_KEY`
+3. (Optional) Add `OPENAI_MODEL` (default `gpt-4.1-mini`)
+4. Redeploy
+
+The dashboard header shows whether AI enrichment is enabled.
+
 ## CSV columns
 
 - `instagram_handle`

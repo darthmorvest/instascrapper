@@ -177,6 +177,18 @@ def init_db() -> None:
                 )
                 """,
             )
+            _execute(
+                conn,
+                """
+                CREATE TABLE IF NOT EXISTS report_files (
+                  id BIGSERIAL PRIMARY KEY,
+                  run_id BIGINT NOT NULL UNIQUE REFERENCES runs(id) ON DELETE CASCADE,
+                  output_filename TEXT NOT NULL UNIQUE,
+                  csv_content TEXT NOT NULL,
+                  created_at TEXT NOT NULL
+                )
+                """,
+            )
             _migrate_runs_table_postgres(conn)
             return
 
@@ -219,6 +231,15 @@ def init_db() -> None:
               state_json TEXT,
               preview_json TEXT,
               FOREIGN KEY(profile_id) REFERENCES profiles(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS report_files (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              run_id INTEGER NOT NULL UNIQUE,
+              output_filename TEXT NOT NULL UNIQUE,
+              csv_content TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              FOREIGN KEY(run_id) REFERENCES runs(id) ON DELETE CASCADE
             );
             """
         )
@@ -704,6 +725,50 @@ def finish_run_failure(run_id: int, error_message: str) -> None:
             """,
             (error_message[:500], error_message[:2000], _utc_now_iso(), run_id),
         )
+
+
+def save_report_file(*, run_id: int, output_filename: str, csv_content: str) -> None:
+    created_at = _utc_now_iso()
+    with _connect() as conn:
+        _execute(
+            conn,
+            """
+            INSERT INTO report_files (
+              run_id,
+              output_filename,
+              csv_content,
+              created_at
+            )
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(output_filename)
+            DO UPDATE SET
+              run_id = excluded.run_id,
+              csv_content = excluded.csv_content,
+              created_at = excluded.created_at
+            """,
+            (run_id, output_filename, csv_content, created_at),
+        )
+
+
+def get_report_file(output_filename: str) -> dict[str, Any] | None:
+    with _connect() as conn:
+        row = _execute(
+            conn,
+            """
+            SELECT
+              run_id,
+              output_filename,
+              csv_content,
+              created_at
+            FROM report_files
+            WHERE output_filename = ?
+            LIMIT 1
+            """,
+            (output_filename,),
+        ).fetchone()
+    if row is None:
+        return None
+    return _row_to_dict(row)
 
 
 def list_runs(limit: int = 50) -> list[dict[str, Any]]:

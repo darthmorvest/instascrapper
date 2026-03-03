@@ -11,7 +11,7 @@ from .ai_enrichment import ai_enabled, enrich_leads_with_ai
 from .config import build_settings
 from .enrichment import enrich_profile
 from .estimation import estimate_monthly_listeners
-from .exporters import write_csv
+from .exporters import render_csv, write_csv_content
 from .instagram_api import InstagramGraphClient
 from .models import LeadRecord
 from .storage import (
@@ -19,6 +19,7 @@ from .storage import (
     finish_run_success,
     get_profile,
     get_run,
+    save_report_file,
     update_run_progress,
 )
 
@@ -184,12 +185,18 @@ def _finalize_success(
     lead_records = [_state_record_to_lead(item) for item in records]
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"report_{_slug(str(run['profile_name']))}_{timestamp}.csv"
-    output_path = write_csv(lead_records, str(output_dir / filename))
+    csv_content = render_csv(lead_records)
+    save_report_file(run_id=int(run["id"]), output_filename=filename, csv_content=csv_content)
+    try:
+        write_csv_content(csv_content, str(output_dir / filename))
+    except Exception:  # noqa: BLE001
+        # Downloads use persistent DB storage first; local file write is a best-effort cache.
+        pass
     preview_json = json.dumps(_preview_rows(records), ensure_ascii=True)
     finish_run_success(
         int(run["id"]),
         lead_count=len(lead_records),
-        output_filename=output_path.name,
+        output_filename=filename,
         preview_json=preview_json,
     )
 

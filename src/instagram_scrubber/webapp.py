@@ -9,14 +9,16 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import requests
-from flask import Flask, abort, jsonify, render_template_string, request, send_from_directory, url_for
+from flask import Flask, Response, abort, jsonify, render_template_string, request, send_from_directory, url_for
 
+from .ai_enrichment import ai_enabled
 from .run_engine import process_run_step
 from .storage import (
     create_profile,
     create_run,
     delete_profile,
     get_profile,
+    get_report_file,
     get_run,
     init_db,
     is_ephemeral_storage,
@@ -149,6 +151,28 @@ INDEX_HTML = """
       background: #f2fcfd;
       border-radius: 999px;
       padding: 4px 10px;
+    }
+
+    .flag {
+      display: inline-flex;
+      margin-top: 10px;
+      border-radius: 999px;
+      padding: 5px 10px;
+      font-size: 0.78rem;
+      font-weight: 700;
+      border: 1px solid;
+    }
+
+    .flag.ok {
+      color: #166534;
+      border-color: #86efac;
+      background: #ecfdf3;
+    }
+
+    .flag.off {
+      color: #92400e;
+      border-color: #fcd34d;
+      background: #fffbeb;
     }
 
     .stats {
@@ -380,6 +404,9 @@ INDEX_HTML = """
       <div class="brand">InstaScrapper Pro</div>
       <h1>Podcast Lead Intelligence Dashboard</h1>
       <p class="sub">Add one or more Instagram accounts, choose one, set lookback, and run your report.</p>
+      <div class="flag {{ 'ok' if ai_enabled else 'off' }}">
+        AI Enrichment: {{ 'Enabled' if ai_enabled else 'Disabled (set OPENAI_API_KEY)' }}
+      </div>
       <div class="flow">
         <span>1. Add Account</span>
         <span>2. Choose Account + Lookback</span>
@@ -1007,6 +1034,7 @@ def _render_page(
         active_run=active_run,
         auto_continue=auto_continue,
         is_ephemeral=is_ephemeral_storage(),
+        ai_enabled=ai_enabled(),
         account_form=account_form,
         run_form=run_form,
         storage_mode=storage_mode_label(),
@@ -1283,13 +1311,25 @@ def create_app() -> Flask:
 
     @app.get("/download/<path:filename>")
     def download_output(filename: str):
+        safe_filename = Path(filename).name
+        if safe_filename != filename:
+            abort(404)
+
         output_root = OUTPUT_DIR.resolve()
-        candidate = (output_root / filename).resolve()
+        candidate = (output_root / safe_filename).resolve()
         if output_root not in candidate.parents and candidate != output_root:
             abort(404)
-        if not candidate.exists() or not candidate.is_file():
+
+        if candidate.exists() and candidate.is_file():
+            return send_from_directory(str(output_root), safe_filename, as_attachment=True)
+
+        report = get_report_file(safe_filename)
+        if report is None:
             abort(404)
-        return send_from_directory(str(output_root), filename, as_attachment=True)
+
+        response = Response(str(report.get("csv_content") or ""), mimetype="text/csv")
+        response.headers["Content-Disposition"] = f'attachment; filename="{safe_filename}"'
+        return response
 
     return app
 
