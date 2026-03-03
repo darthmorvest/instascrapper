@@ -55,7 +55,13 @@ def _connect():
             raise RuntimeError(
                 "DATABASE_URL is set, but Postgres driver is missing. Install psycopg[binary]."
             ) from err
-        return psycopg.connect(_database_url(), row_factory=dict_row)
+        # Supabase transaction poolers (PgBouncer) can error on prepared statements.
+        # Disable automatic prepare to avoid DuplicatePreparedStatement failures.
+        return psycopg.connect(
+            _database_url(),
+            row_factory=dict_row,
+            prepare_threshold=None,
+        )
 
     conn = sqlite3.connect(db_path())
     conn.row_factory = sqlite3.Row

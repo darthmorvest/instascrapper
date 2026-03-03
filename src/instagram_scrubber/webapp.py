@@ -1770,7 +1770,12 @@ def _render_dashboard(
 
 def create_app() -> Flask:
     app = Flask(__name__)
-    app.secret_key = os.getenv("APP_SECRET_KEY", os.getenv("FLASK_SECRET_KEY", "change-me-before-prod"))
+    secret_key = (
+        os.getenv("APP_SECRET_KEY", "").strip()
+        or os.getenv("FLASK_SECRET_KEY", "").strip()
+        or "change-me-before-prod"
+    )
+    app.secret_key = secret_key
     app.config.update(
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Lax",
