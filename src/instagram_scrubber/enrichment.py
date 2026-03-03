@@ -35,6 +35,19 @@ PODCAST_HOST_HINTS = (
     "megaphone.fm",
 )
 
+GENRE_HINTS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("Business & Marketing", ("business", "entrepreneur", "founder", "marketing", "sales", "startup")),
+    ("Health & Wellness", ("wellness", "fitness", "nutrition", "mental health", "mindset", "health")),
+    ("Comedy", ("comedy", "funny", "humor", "stand up", "stand-up")),
+    ("News & Politics", ("news", "politics", "policy", "current events", "journalist")),
+    ("True Crime", ("true crime", "crime", "investigation", "mystery")),
+    ("Technology", ("tech", "ai", "software", "developer", "engineering", "saas")),
+    ("Education", ("education", "learning", "teacher", "study", "tutorial")),
+    ("Sports", ("sports", "athlete", "football", "basketball", "soccer", "baseball", "training")),
+    ("Faith & Spirituality", ("faith", "church", "christian", "spiritual", "bible", "meditation")),
+    ("Entertainment", ("entertainment", "music", "film", "tv", "pop culture", "creator")),
+)
+
 
 def _http_get(url: str, timeout_seconds: int) -> requests.Response:
     return requests.get(
@@ -71,6 +84,21 @@ def looks_like_podcast_url(url: str) -> bool:
     if any(host in lower for host in PODCAST_HOST_HINTS):
         return True
     return any(word in lower for word in PODCAST_HINT_KEYWORDS)
+
+
+def infer_podcast_genre(*, biography: str | None, podcast_urls: list[str]) -> str | None:
+    haystack = " ".join([biography or "", " ".join(podcast_urls)]).lower()
+    if not haystack.strip():
+        return None
+
+    best_genre = None
+    best_score = 0
+    for genre, hints in GENRE_HINTS:
+        score = sum(1 for hint in hints if hint in haystack)
+        if score > best_score:
+            best_score = score
+            best_genre = genre
+    return best_genre
 
 
 def crawl_website_for_hints(
@@ -138,4 +166,10 @@ def enrich_profile(client: InstagramGraphClient, username: str) -> ProfileEnrich
             profile.notes.append("podcast_links_discovered_from_website")
 
     profile.podcast_urls = sorted(podcast_urls)
+    profile.podcast_genre = infer_podcast_genre(
+        biography=profile.biography,
+        podcast_urls=profile.podcast_urls,
+    )
+    if profile.podcast_genre:
+        profile.notes.append(f"podcast_genre_inferred={profile.podcast_genre}")
     return profile

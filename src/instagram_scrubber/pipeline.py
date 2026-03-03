@@ -58,6 +58,7 @@ def build_leads(
                 instagram_profile_url=f"https://instagram.com/{canonical_username}",
                 is_verified=profile.is_verified,
                 podcast_urls=profile.podcast_urls,
+                podcast_genre=profile.podcast_genre,
                 estimated_monthly_listeners=estimate.monthly_listeners,
                 estimate_confidence=estimate.confidence,
                 email=profile.email,
@@ -72,4 +73,3 @@ def build_leads(
         )
 
     return sorted(records, key=lambda x: x.estimated_monthly_listeners, reverse=True)
-

@@ -27,6 +27,7 @@ class ProfileEnrichment:
     email: str | None = None
     followers_count: int | None = None
     podcast_urls: list[str] = field(default_factory=list)
+    podcast_genre: str | None = None
     notes: list[str] = field(default_factory=list)
 
 
@@ -43,6 +44,7 @@ class LeadRecord:
     instagram_profile_url: str
     is_verified: bool | None
     podcast_urls: list[str]
+    podcast_genre: str | None
     estimated_monthly_listeners: int
     estimate_confidence: float
     email: str | None

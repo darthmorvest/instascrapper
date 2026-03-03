@@ -166,6 +166,7 @@ def _state_record_to_lead(record: dict[str, Any]) -> LeadRecord:
         instagram_profile_url=str(record.get("instagram_profile_url", "")),
         is_verified=record.get("is_verified"),
         podcast_urls=list(record.get("podcast_urls", [])),
+        podcast_genre=record.get("podcast_genre"),
         estimated_monthly_listeners=int(record.get("estimated_monthly_listeners", 0)),
         estimate_confidence=float(record.get("estimate_confidence", 0.0)),
         email=record.get("email"),
@@ -191,6 +192,7 @@ def _preview_rows(records: list[dict[str, Any]], limit: int = 25) -> list[dict[s
             {
                 "instagram_handle": record.get("instagram_handle"),
                 "podcast_urls": record.get("podcast_urls", []),
+                "podcast_genre": record.get("podcast_genre"),
                 "estimated_monthly_listeners": record.get("estimated_monthly_listeners"),
                 "estimate_confidence": record.get("estimate_confidence"),
                 "lead_score": record.get("lead_score"),
@@ -242,9 +244,10 @@ def process_run_step(
     *,
     run_id: int,
     output_dir: Path,
+    workspace_id: int | None = None,
     step_budget_seconds: float | None = None,
 ) -> dict[str, Any]:
-    run = get_run(run_id)
+    run = get_run(run_id, workspace_id=workspace_id)
     if run is None:
         raise ValueError("Run not found")
 
@@ -257,7 +260,7 @@ def process_run_step(
     start = time.monotonic()
 
     try:
-        profile = get_profile(int(run["profile_id"]))
+        profile = get_profile(int(run["profile_id"]), workspace_id=workspace_id)
         if profile is None:
             raise RuntimeError("Selected account is no longer available.")
 
@@ -490,6 +493,7 @@ def process_run_step(
                                     "instagram_profile_url": f"https://instagram.com/{canonical_username}",
                                     "is_verified": profile_data.is_verified,
                                     "podcast_urls": profile_data.podcast_urls,
+                                    "podcast_genre": profile_data.podcast_genre,
                                     "estimated_monthly_listeners": estimate.monthly_listeners,
                                     "estimate_confidence": estimate.confidence,
                                     "email": profile_data.email,
@@ -553,6 +557,8 @@ def process_run_step(
                     if not ai_data:
                         continue
                     lead["ai_fit_score"] = ai_data.get("ai_fit_score")
+                    if ai_data.get("podcast_genre"):
+                        lead["podcast_genre"] = ai_data.get("podcast_genre")
                     lead["ai_summary"] = ai_data.get("ai_summary")
                     lead["ai_outreach_angle"] = ai_data.get("ai_outreach_angle")
                     lead["lead_score"] = _compute_lead_score(
@@ -583,15 +589,15 @@ def process_run_step(
 
             if phase == "finalize":
                 _finalize_success(run=run, state=state, output_dir=output_dir)
-                return get_run(run_id) or run
+                return get_run(run_id, workspace_id=workspace_id) or run
 
             phase = "collect_media"
 
         update_run_progress(run_id, phase=phase, state_json=_serialize_state(state))
-        return get_run(run_id) or run
+        return get_run(run_id, workspace_id=workspace_id) or run
     except Exception as err:  # noqa: BLE001
         finish_run_failure(run_id, str(err))
-        failed = get_run(run_id)
+        failed = get_run(run_id, workspace_id=workspace_id)
         if failed is None:
             raise
         return failed

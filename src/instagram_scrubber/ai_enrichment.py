@@ -31,6 +31,7 @@ def enrich_leads_with_ai(
                 "followers_count": lead.get("followers_count"),
                 "estimated_monthly_listeners": lead.get("estimated_monthly_listeners"),
                 "podcast_urls": lead.get("podcast_urls") or [],
+                "podcast_genre": lead.get("podcast_genre"),
                 "bio_excerpt": (lead.get("biography") or "")[:360],
                 "website": lead.get("website"),
                 "engagement_comment_count": lead.get("engagement_comment_count"),
@@ -48,6 +49,7 @@ def enrich_leads_with_ai(
                 {
                     "instagram_handle": "string",
                     "ai_fit_score": "integer 0-100",
+                    "podcast_genre": "short genre label string",
                     "ai_summary": "short sentence, <= 24 words",
                     "ai_outreach_angle": "short sentence, <= 20 words",
                 }
@@ -116,6 +118,7 @@ def enrich_leads_with_ai(
             fit_score = None
         mapped[handle] = {
             "ai_fit_score": fit_score,
+            "podcast_genre": (str(item.get("podcast_genre", "")).strip() or None),
             "ai_summary": (str(item.get("ai_summary", "")).strip() or None),
             "ai_outreach_angle": (str(item.get("ai_outreach_angle", "")).strip() or None),
         }

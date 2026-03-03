@@ -17,6 +17,10 @@ class MediaItem:
     media_id: str
     permalink: str | None
     timestamp: datetime | None
+    media_type: str | None = None
+    comments_count: int | None = None
+    like_count: int | None = None
+    caption: str | None = None
 
 
 class InstagramGraphClient:
@@ -103,7 +107,7 @@ class InstagramGraphClient:
             payload = self._request_next_page(next_url)
 
     def list_media(self, media_limit: int, lookback_days: int | None) -> list[MediaItem]:
-        fields = "id,permalink,timestamp"
+        fields = "id,permalink,timestamp,media_type,comments_count,like_count,caption"
         items: list[MediaItem] = []
         cutoff: datetime | None = None
         if lookback_days is not None and lookback_days > 0:
@@ -121,6 +125,18 @@ class InstagramGraphClient:
                     media_id=str(media["id"]),
                     permalink=media.get("permalink"),
                     timestamp=ts,
+                    media_type=media.get("media_type"),
+                    comments_count=(
+                        int(media["comments_count"])
+                        if media.get("comments_count") is not None
+                        else None
+                    ),
+                    like_count=(
+                        int(media["like_count"])
+                        if media.get("like_count") is not None
+                        else None
+                    ),
+                    caption=(media.get("caption") or "").strip()[:220] or None,
                 )
             )
             if len(items) >= media_limit:
@@ -144,13 +160,28 @@ class InstagramGraphClient:
 
     def get_media_item(self, media_id: str) -> MediaItem:
         try:
-            payload = self._request(media_id, params={"fields": "id,permalink,timestamp"})
+            payload = self._request(
+                media_id,
+                params={"fields": "id,permalink,timestamp,media_type,comments_count,like_count,caption"},
+            )
         except Exception:
             return MediaItem(media_id=str(media_id), permalink=None, timestamp=None)
         return MediaItem(
             media_id=str(payload.get("id") or media_id),
             permalink=payload.get("permalink"),
             timestamp=self._parse_dt(payload.get("timestamp")),
+            media_type=payload.get("media_type"),
+            comments_count=(
+                int(payload["comments_count"])
+                if payload.get("comments_count") is not None
+                else None
+            ),
+            like_count=(
+                int(payload["like_count"])
+                if payload.get("like_count") is not None
+                else None
+            ),
+            caption=(payload.get("caption") or "").strip()[:220] or None,
         )
 
     def list_comments_page(

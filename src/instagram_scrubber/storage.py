@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -39,6 +40,10 @@ def storage_mode_label() -> str:
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _new_token() -> str:
+    return secrets.token_urlsafe(24)
 
 
 def _connect():
@@ -101,6 +106,7 @@ def _has_column_postgres(conn, table: str, column: str) -> bool:
 
 def _migrate_runs_table_sqlite(conn: sqlite3.Connection) -> None:
     additions = [
+        ("workspace_id", "INTEGER NOT NULL DEFAULT 1"),
         ("phase", "TEXT NOT NULL DEFAULT 'queued'"),
         ("progress_message", "TEXT"),
         ("progress_current", "INTEGER NOT NULL DEFAULT 0"),
@@ -117,6 +123,7 @@ def _migrate_runs_table_sqlite(conn: sqlite3.Connection) -> None:
 
 def _migrate_runs_table_postgres(conn) -> None:
     additions = [
+        ("workspace_id", "BIGINT NOT NULL DEFAULT 1"),
         ("phase", "TEXT NOT NULL DEFAULT 'queued'"),
         ("progress_message", "TEXT"),
         ("progress_current", "INTEGER NOT NULL DEFAULT 0"),
@@ -131,15 +138,105 @@ def _migrate_runs_table_postgres(conn) -> None:
         _execute(conn, f"ALTER TABLE runs ADD COLUMN IF NOT EXISTS {column} {definition}")
 
 
+def _migrate_profiles_table_sqlite(conn: sqlite3.Connection) -> None:
+    additions = [
+        ("workspace_id", "INTEGER NOT NULL DEFAULT 1"),
+        ("team_member_ids_json", "TEXT NOT NULL DEFAULT '[]'"),
+    ]
+    for column, definition in additions:
+        if _has_column_sqlite(conn, "profiles", column):
+            continue
+        conn.execute(f"ALTER TABLE profiles ADD COLUMN {column} {definition}")
+
+
+def _migrate_profiles_table_postgres(conn) -> None:
+    additions = [
+        ("workspace_id", "BIGINT NOT NULL DEFAULT 1"),
+        ("team_member_ids_json", "TEXT NOT NULL DEFAULT '[]'"),
+    ]
+    for column, definition in additions:
+        if _has_column_postgres(conn, "profiles", column):
+            continue
+        _execute(conn, f"ALTER TABLE profiles ADD COLUMN IF NOT EXISTS {column} {definition}")
+
+
+def _bootstrap_workspace_defaults(conn) -> None:
+    row = _execute(conn, "SELECT id FROM workspaces ORDER BY id ASC LIMIT 1").fetchone()
+    if row is None:
+        _execute(
+            conn,
+            """
+            INSERT INTO workspaces (name, created_at, updated_at)
+            VALUES (?, ?, ?)
+            """,
+            ("Default Workspace", _utc_now_iso(), _utc_now_iso()),
+        )
+
+
 def init_db() -> None:
     with _connect() as conn:
         if using_postgres():
             _execute(
                 conn,
                 """
+                CREATE TABLE IF NOT EXISTS users (
+                  id BIGSERIAL PRIMARY KEY,
+                  email TEXT NOT NULL UNIQUE,
+                  password_hash TEXT NOT NULL,
+                  full_name TEXT NOT NULL,
+                  created_at TEXT NOT NULL,
+                  updated_at TEXT NOT NULL
+                )
+                """,
+            )
+            _execute(
+                conn,
+                """
+                CREATE TABLE IF NOT EXISTS workspaces (
+                  id BIGSERIAL PRIMARY KEY,
+                  name TEXT NOT NULL,
+                  created_at TEXT NOT NULL,
+                  updated_at TEXT NOT NULL
+                )
+                """,
+            )
+            _execute(
+                conn,
+                """
+                CREATE TABLE IF NOT EXISTS workspace_members (
+                  id BIGSERIAL PRIMARY KEY,
+                  workspace_id BIGINT NOT NULL,
+                  user_id BIGINT NOT NULL,
+                  role TEXT NOT NULL,
+                  created_at TEXT NOT NULL,
+                  UNIQUE(workspace_id, user_id)
+                )
+                """,
+            )
+            _execute(
+                conn,
+                """
+                CREATE TABLE IF NOT EXISTS workspace_invites (
+                  id BIGSERIAL PRIMARY KEY,
+                  workspace_id BIGINT NOT NULL,
+                  email TEXT NOT NULL,
+                  role TEXT NOT NULL,
+                  token TEXT NOT NULL UNIQUE,
+                  invited_by_user_id BIGINT,
+                  expires_at TEXT NOT NULL,
+                  accepted_at TEXT,
+                  created_at TEXT NOT NULL
+                )
+                """,
+            )
+            _execute(
+                conn,
+                """
                 CREATE TABLE IF NOT EXISTS profiles (
                   id BIGSERIAL PRIMARY KEY,
+                  workspace_id BIGINT NOT NULL DEFAULT 1,
                   name TEXT NOT NULL UNIQUE,
+                  team_member_ids_json TEXT NOT NULL DEFAULT '[]',
                   access_token TEXT NOT NULL,
                   business_account_id TEXT NOT NULL,
                   graph_version TEXT NOT NULL DEFAULT 'v21.0',
@@ -160,6 +257,7 @@ def init_db() -> None:
                 """
                 CREATE TABLE IF NOT EXISTS runs (
                   id BIGSERIAL PRIMARY KEY,
+                  workspace_id BIGINT NOT NULL DEFAULT 1,
                   profile_id BIGINT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
                   started_at TEXT NOT NULL,
                   completed_at TEXT,
@@ -193,14 +291,55 @@ def init_db() -> None:
                 )
                 """,
             )
+            _migrate_profiles_table_postgres(conn)
             _migrate_runs_table_postgres(conn)
+            _bootstrap_workspace_defaults(conn)
             return
 
         conn.executescript(
             """
+            CREATE TABLE IF NOT EXISTS users (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              email TEXT NOT NULL UNIQUE,
+              password_hash TEXT NOT NULL,
+              full_name TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS workspaces (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              name TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS workspace_members (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              workspace_id INTEGER NOT NULL,
+              user_id INTEGER NOT NULL,
+              role TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              UNIQUE(workspace_id, user_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS workspace_invites (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              workspace_id INTEGER NOT NULL,
+              email TEXT NOT NULL,
+              role TEXT NOT NULL,
+              token TEXT NOT NULL UNIQUE,
+              invited_by_user_id INTEGER,
+              expires_at TEXT NOT NULL,
+              accepted_at TEXT,
+              created_at TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS profiles (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
+              workspace_id INTEGER NOT NULL DEFAULT 1,
               name TEXT NOT NULL UNIQUE,
+              team_member_ids_json TEXT NOT NULL DEFAULT '[]',
               access_token TEXT NOT NULL,
               business_account_id TEXT NOT NULL,
               graph_version TEXT NOT NULL DEFAULT 'v21.0',
@@ -217,6 +356,7 @@ def init_db() -> None:
 
             CREATE TABLE IF NOT EXISTS runs (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
+              workspace_id INTEGER NOT NULL DEFAULT 1,
               profile_id INTEGER NOT NULL,
               started_at TEXT NOT NULL,
               completed_at TEXT,
@@ -248,17 +388,27 @@ def init_db() -> None:
             );
             """
         )
+        _migrate_profiles_table_sqlite(conn)
         _migrate_runs_table_sqlite(conn)
+        _bootstrap_workspace_defaults(conn)
 
 
-def list_profiles() -> list[dict[str, Any]]:
+def list_profiles(workspace_id: int | None = None) -> list[dict[str, Any]]:
+    where = ""
+    params: list[Any] = []
+    if workspace_id is not None:
+        where = "WHERE workspace_id = ?"
+        params.append(int(workspace_id))
+
     with _connect() as conn:
         rows = _execute(
             conn,
-            """
+            f"""
             SELECT
               id,
+              workspace_id,
               name,
+              team_member_ids_json,
               business_account_id,
               graph_version,
               timeout_seconds,
@@ -271,20 +421,30 @@ def list_profiles() -> list[dict[str, Any]]:
               created_at,
               updated_at
             FROM profiles
+            {where}
             ORDER BY name ASC
             """,
+            tuple(params),
         ).fetchall()
     return [_row_to_dict(row) for row in rows]
 
 
-def get_profile(profile_id: int) -> dict[str, Any] | None:
+def get_profile(profile_id: int, workspace_id: int | None = None) -> dict[str, Any] | None:
+    where_workspace = ""
+    params: list[Any] = [profile_id]
+    if workspace_id is not None:
+        where_workspace = "AND workspace_id = ?"
+        params.append(int(workspace_id))
+
     with _connect() as conn:
         row = _execute(
             conn,
-            """
+            f"""
             SELECT
               id,
+              workspace_id,
               name,
+              team_member_ids_json,
               access_token,
               business_account_id,
               graph_version,
@@ -299,22 +459,31 @@ def get_profile(profile_id: int) -> dict[str, Any] | None:
               updated_at
             FROM profiles
             WHERE id = ?
+            {where_workspace}
             """,
-            (profile_id,),
+            tuple(params),
         ).fetchone()
     if row is None:
         return None
     return _row_to_dict(row)
 
 
-def get_active_profile() -> dict[str, Any] | None:
+def get_active_profile(workspace_id: int | None = None) -> dict[str, Any] | None:
+    where = ""
+    params: list[Any] = []
+    if workspace_id is not None:
+        where = "WHERE workspace_id = ?"
+        params.append(int(workspace_id))
+
     with _connect() as conn:
         row = _execute(
             conn,
-            """
+            f"""
             SELECT
               id,
+              workspace_id,
               name,
+              team_member_ids_json,
               access_token,
               business_account_id,
               graph_version,
@@ -328,9 +497,11 @@ def get_active_profile() -> dict[str, Any] | None:
               created_at,
               updated_at
             FROM profiles
+            {where}
             ORDER BY updated_at DESC, id DESC
             LIMIT 1
             """,
+            tuple(params),
         ).fetchone()
     if row is None:
         return None
@@ -339,7 +510,9 @@ def get_active_profile() -> dict[str, Any] | None:
 
 def create_profile(
     *,
+    workspace_id: int = 1,
     name: str,
+    team_member_user_ids: list[int] | None = None,
     access_token: str,
     business_account_id: str,
     graph_version: str,
@@ -352,8 +525,11 @@ def create_profile(
     default_max_profiles: int | None,
 ) -> int:
     created_at = _utc_now_iso()
+    team_member_ids_json = json.dumps(sorted({int(user_id) for user_id in (team_member_user_ids or [])}), ensure_ascii=True)
     values = (
+        int(workspace_id),
         name.strip(),
+        team_member_ids_json,
         access_token.strip(),
         business_account_id.strip(),
         graph_version.strip() or "v21.0",
@@ -374,7 +550,9 @@ def create_profile(
                 conn,
                 """
                 INSERT INTO profiles (
+                  workspace_id,
                   name,
+                  team_member_ids_json,
                   access_token,
                   business_account_id,
                   graph_version,
@@ -388,7 +566,7 @@ def create_profile(
                   created_at,
                   updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 RETURNING id
                 """,
                 values,
@@ -401,7 +579,9 @@ def create_profile(
             conn,
             """
             INSERT INTO profiles (
+              workspace_id,
               name,
+              team_member_ids_json,
               access_token,
               business_account_id,
               graph_version,
@@ -415,7 +595,7 @@ def create_profile(
               created_at,
               updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             values,
         )
@@ -424,8 +604,10 @@ def create_profile(
 
 def update_profile(
     *,
+    workspace_id: int | None = None,
     profile_id: int,
     name: str,
+    team_member_user_ids: list[int] | None = None,
     access_token: str,
     business_account_id: str,
     graph_version: str,
@@ -437,13 +619,36 @@ def update_profile(
     default_lookback_days: int,
     default_max_profiles: int | None,
 ) -> None:
+    team_member_ids_json = json.dumps(sorted({int(user_id) for user_id in (team_member_user_ids or [])}), ensure_ascii=True)
+    where_workspace = ""
+    params: list[Any] = [
+        name.strip(),
+        team_member_ids_json,
+        access_token.strip(),
+        business_account_id.strip(),
+        graph_version.strip() or "v21.0",
+        timeout_seconds,
+        retry_count,
+        retry_backoff_seconds,
+        default_media_limit,
+        default_comments_per_media,
+        default_lookback_days,
+        default_max_profiles,
+        _utc_now_iso(),
+        profile_id,
+    ]
+    if workspace_id is not None:
+        where_workspace = "AND workspace_id = ?"
+        params.append(int(workspace_id))
+
     with _connect() as conn:
         _execute(
             conn,
-            """
+            f"""
             UPDATE profiles
             SET
               name = ?,
+              team_member_ids_json = ?,
               access_token = ?,
               business_account_id = ?,
               graph_version = ?,
@@ -456,28 +661,17 @@ def update_profile(
               default_max_profiles = ?,
               updated_at = ?
             WHERE id = ?
+            {where_workspace}
             """,
-            (
-                name.strip(),
-                access_token.strip(),
-                business_account_id.strip(),
-                graph_version.strip() or "v21.0",
-                timeout_seconds,
-                retry_count,
-                retry_backoff_seconds,
-                default_media_limit,
-                default_comments_per_media,
-                default_lookback_days,
-                default_max_profiles,
-                _utc_now_iso(),
-                profile_id,
-            ),
+            tuple(params),
         )
 
 
 def upsert_active_profile(
     *,
+    workspace_id: int = 1,
     name: str,
+    team_member_user_ids: list[int] | None = None,
     access_token: str,
     business_account_id: str,
     graph_version: str,
@@ -489,10 +683,12 @@ def upsert_active_profile(
     default_lookback_days: int,
     default_max_profiles: int | None,
 ) -> int:
-    active = get_active_profile()
+    active = get_active_profile(workspace_id=workspace_id)
     if active is None:
         return create_profile(
+            workspace_id=workspace_id,
             name=name,
+            team_member_user_ids=team_member_user_ids,
             access_token=access_token,
             business_account_id=business_account_id,
             graph_version=graph_version,
@@ -506,8 +702,10 @@ def upsert_active_profile(
         )
 
     update_profile(
+        workspace_id=workspace_id,
         profile_id=int(active["id"]),
         name=name,
+        team_member_user_ids=team_member_user_ids,
         access_token=access_token,
         business_account_id=business_account_id,
         graph_version=graph_version,
@@ -522,13 +720,20 @@ def upsert_active_profile(
     return int(active["id"])
 
 
-def delete_profile(profile_id: int) -> None:
+def delete_profile(profile_id: int, workspace_id: int | None = None) -> None:
+    where_workspace = ""
+    params: list[Any] = [profile_id]
+    if workspace_id is not None:
+        where_workspace = "AND workspace_id = ?"
+        params.append(int(workspace_id))
+
     with _connect() as conn:
-        _execute(conn, "DELETE FROM profiles WHERE id = ?", (profile_id,))
+        _execute(conn, f"DELETE FROM profiles WHERE id = ? {where_workspace}", tuple(params))
 
 
 def create_run(
     *,
+    workspace_id: int = 1,
     profile_id: int,
     media_limit: int,
     comments_per_media: int,
@@ -550,6 +755,7 @@ def create_run(
         selected_media_ids_json = "[]"
 
     values = (
+        int(workspace_id),
         profile_id,
         _utc_now_iso(),
         media_limit,
@@ -564,6 +770,7 @@ def create_run(
                 conn,
                 """
                 INSERT INTO runs (
+                  workspace_id,
                   profile_id,
                   started_at,
                   status,
@@ -579,7 +786,7 @@ def create_run(
                   preview_json,
                   selected_media_ids_json
                 )
-                VALUES (?, ?, 'queued', 'queued', 'Queued', 0, 0, ?, ?, ?, ?, '{}', '[]', ?)
+                VALUES (?, ?, ?, 'queued', 'queued', 'Queued', 0, 0, ?, ?, ?, ?, '{}', '[]', ?)
                 RETURNING id
                 """,
                 values,
@@ -592,6 +799,7 @@ def create_run(
             conn,
             """
             INSERT INTO runs (
+              workspace_id,
               profile_id,
               started_at,
               status,
@@ -607,22 +815,30 @@ def create_run(
               preview_json,
               selected_media_ids_json
             )
-            VALUES (?, ?, 'queued', 'queued', 'Queued', 0, 0, ?, ?, ?, ?, '{}', '[]', ?)
+            VALUES (?, ?, ?, 'queued', 'queued', 'Queued', 0, 0, ?, ?, ?, ?, '{}', '[]', ?)
             """,
             values,
         )
         return int(cursor.lastrowid)
 
 
-def get_run(run_id: int) -> dict[str, Any] | None:
+def get_run(run_id: int, workspace_id: int | None = None) -> dict[str, Any] | None:
+    where_workspace = ""
+    params: list[Any] = [run_id]
+    if workspace_id is not None:
+        where_workspace = "AND runs.workspace_id = ?"
+        params.append(int(workspace_id))
+
     with _connect() as conn:
         row = _execute(
             conn,
-            """
+            f"""
             SELECT
               runs.id,
+              runs.workspace_id,
               runs.profile_id,
               profiles.name AS profile_name,
+              profiles.team_member_ids_json AS profile_team_member_ids_json,
               runs.started_at,
               runs.completed_at,
               runs.status,
@@ -643,8 +859,9 @@ def get_run(run_id: int) -> dict[str, Any] | None:
             FROM runs
             JOIN profiles ON profiles.id = runs.profile_id
             WHERE runs.id = ?
+            {where_workspace}
             """,
-            (run_id,),
+            tuple(params),
         ).fetchone()
     if row is None:
         return None
@@ -794,15 +1011,27 @@ def get_report_file(output_filename: str) -> dict[str, Any] | None:
     return _row_to_dict(row)
 
 
-def list_runs(limit: int = 50) -> list[dict[str, Any]]:
+def get_run_by_output_filename(
+    output_filename: str,
+    *,
+    workspace_id: int | None = None,
+) -> dict[str, Any] | None:
+    where_workspace = ""
+    params: list[Any] = [output_filename]
+    if workspace_id is not None:
+        where_workspace = "AND runs.workspace_id = ?"
+        params.append(int(workspace_id))
+
     with _connect() as conn:
-        rows = _execute(
+        row = _execute(
             conn,
-            """
+            f"""
             SELECT
               runs.id,
+              runs.workspace_id,
               runs.profile_id,
               profiles.name AS profile_name,
+              profiles.team_member_ids_json AS profile_team_member_ids_json,
               runs.started_at,
               runs.completed_at,
               runs.status,
@@ -822,9 +1051,388 @@ def list_runs(limit: int = 50) -> list[dict[str, Any]]:
               runs.selected_media_ids_json
             FROM runs
             JOIN profiles ON profiles.id = runs.profile_id
+            WHERE runs.output_filename = ?
+            {where_workspace}
+            LIMIT 1
+            """,
+            tuple(params),
+        ).fetchone()
+    if row is None:
+        return None
+    return _row_to_dict(row)
+
+
+def list_runs(limit: int = 50, workspace_id: int | None = None) -> list[dict[str, Any]]:
+    where = ""
+    params: list[Any] = []
+    if workspace_id is not None:
+        where = "WHERE runs.workspace_id = ?"
+        params.append(int(workspace_id))
+    params.append(limit)
+
+    with _connect() as conn:
+        rows = _execute(
+            conn,
+            f"""
+            SELECT
+              runs.id,
+              runs.workspace_id,
+              runs.profile_id,
+              profiles.name AS profile_name,
+              profiles.team_member_ids_json AS profile_team_member_ids_json,
+              runs.started_at,
+              runs.completed_at,
+              runs.status,
+              runs.phase,
+              runs.progress_message,
+              runs.progress_current,
+              runs.progress_total,
+              runs.media_limit,
+              runs.comments_per_media,
+              runs.lookback_days,
+              runs.max_profiles,
+              runs.lead_count,
+              runs.output_filename,
+              runs.error_message,
+              runs.state_json,
+              runs.preview_json,
+              runs.selected_media_ids_json
+            FROM runs
+            JOIN profiles ON profiles.id = runs.profile_id
+            {where}
             ORDER BY runs.id DESC
             LIMIT ?
             """,
-            (limit,),
+            tuple(params),
         ).fetchall()
     return [_row_to_dict(row) for row in rows]
+
+
+def count_users() -> int:
+    with _connect() as conn:
+        row = _execute(conn, "SELECT COUNT(*) AS c FROM users").fetchone()
+    if row is None:
+        return 0
+    return int(_row_to_dict(row).get("c", 0))
+
+
+def get_workspace(workspace_id: int) -> dict[str, Any] | None:
+    with _connect() as conn:
+        row = _execute(
+            conn,
+            """
+            SELECT id, name, created_at, updated_at
+            FROM workspaces
+            WHERE id = ?
+            LIMIT 1
+            """,
+            (int(workspace_id),),
+        ).fetchone()
+    if row is None:
+        return None
+    return _row_to_dict(row)
+
+
+def add_workspace_member(*, workspace_id: int, user_id: int, role: str) -> None:
+    with _connect() as conn:
+        _execute(
+            conn,
+            """
+            INSERT INTO workspace_members (workspace_id, user_id, role, created_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(workspace_id, user_id) DO UPDATE SET role = excluded.role
+            """,
+            (
+                int(workspace_id),
+                int(user_id),
+                role.strip().lower() or "member",
+                _utc_now_iso(),
+            ),
+        )
+
+
+def get_user_by_email(email: str) -> dict[str, Any] | None:
+    with _connect() as conn:
+        row = _execute(
+            conn,
+            """
+            SELECT id, email, password_hash, full_name, created_at, updated_at
+            FROM users
+            WHERE lower(email) = lower(?)
+            LIMIT 1
+            """,
+            (email.strip(),),
+        ).fetchone()
+    if row is None:
+        return None
+    return _row_to_dict(row)
+
+
+def get_user(user_id: int) -> dict[str, Any] | None:
+    with _connect() as conn:
+        row = _execute(
+            conn,
+            """
+            SELECT id, email, password_hash, full_name, created_at, updated_at
+            FROM users
+            WHERE id = ?
+            LIMIT 1
+            """,
+            (user_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    return _row_to_dict(row)
+
+
+def create_user(*, email: str, password_hash: str, full_name: str) -> int:
+    now = _utc_now_iso()
+    values = (email.strip().lower(), password_hash, full_name.strip(), now, now)
+    with _connect() as conn:
+        if using_postgres():
+            row = _execute(
+                conn,
+                """
+                INSERT INTO users (email, password_hash, full_name, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                RETURNING id
+                """,
+                values,
+            ).fetchone()
+            if row is None:
+                raise RuntimeError("Failed to create user")
+            return int(_row_to_dict(row)["id"])
+        cursor = _execute(
+            conn,
+            """
+            INSERT INTO users (email, password_hash, full_name, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            values,
+        )
+        return int(cursor.lastrowid)
+
+
+def create_workspace(*, name: str, owner_user_id: int) -> int:
+    now = _utc_now_iso()
+    with _connect() as conn:
+        if using_postgres():
+            row = _execute(
+                conn,
+                """
+                INSERT INTO workspaces (name, created_at, updated_at)
+                VALUES (?, ?, ?)
+                RETURNING id
+                """,
+                (name.strip(), now, now),
+            ).fetchone()
+            if row is None:
+                raise RuntimeError("Failed to create workspace")
+            workspace_id = int(_row_to_dict(row)["id"])
+        else:
+            cursor = _execute(
+                conn,
+                """
+                INSERT INTO workspaces (name, created_at, updated_at)
+                VALUES (?, ?, ?)
+                """,
+                (name.strip(), now, now),
+            )
+            workspace_id = int(cursor.lastrowid)
+
+        _execute(
+            conn,
+            """
+            INSERT INTO workspace_members (workspace_id, user_id, role, created_at)
+            VALUES (?, ?, 'owner', ?)
+            ON CONFLICT(workspace_id, user_id) DO NOTHING
+            """,
+            (workspace_id, int(owner_user_id), now),
+        )
+        return workspace_id
+
+
+def list_user_workspaces(user_id: int) -> list[dict[str, Any]]:
+    with _connect() as conn:
+        rows = _execute(
+            conn,
+            """
+            SELECT
+              w.id,
+              w.name,
+              wm.role,
+              w.created_at,
+              w.updated_at
+            FROM workspaces w
+            JOIN workspace_members wm ON wm.workspace_id = w.id
+            WHERE wm.user_id = ?
+            ORDER BY w.name ASC
+            """,
+            (int(user_id),),
+        ).fetchall()
+    return [_row_to_dict(row) for row in rows]
+
+
+def get_workspace_membership(workspace_id: int, user_id: int) -> dict[str, Any] | None:
+    with _connect() as conn:
+        row = _execute(
+            conn,
+            """
+            SELECT workspace_id, user_id, role, created_at
+            FROM workspace_members
+            WHERE workspace_id = ? AND user_id = ?
+            LIMIT 1
+            """,
+            (int(workspace_id), int(user_id)),
+        ).fetchone()
+    if row is None:
+        return None
+    return _row_to_dict(row)
+
+
+def list_workspace_members(workspace_id: int) -> list[dict[str, Any]]:
+    with _connect() as conn:
+        rows = _execute(
+            conn,
+            """
+            SELECT
+              wm.workspace_id,
+              wm.user_id,
+              wm.role,
+              wm.created_at,
+              u.email,
+              u.full_name
+            FROM workspace_members wm
+            JOIN users u ON u.id = wm.user_id
+            WHERE wm.workspace_id = ?
+            ORDER BY
+              CASE wm.role
+                WHEN 'owner' THEN 1
+                WHEN 'admin' THEN 2
+                WHEN 'member' THEN 3
+                ELSE 4
+              END,
+              u.full_name ASC
+            """,
+            (int(workspace_id),),
+        ).fetchall()
+    return [_row_to_dict(row) for row in rows]
+
+
+def create_workspace_invite(
+    *,
+    workspace_id: int,
+    email: str,
+    role: str,
+    invited_by_user_id: int,
+    expires_at: str,
+) -> str:
+    token = _new_token()
+    with _connect() as conn:
+        _execute(
+            conn,
+            """
+            INSERT INTO workspace_invites (
+              workspace_id,
+              email,
+              role,
+              token,
+              invited_by_user_id,
+              expires_at,
+              accepted_at,
+              created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, NULL, ?)
+            """,
+            (
+                int(workspace_id),
+                email.strip().lower(),
+                role.strip().lower(),
+                token,
+                int(invited_by_user_id),
+                expires_at,
+                _utc_now_iso(),
+            ),
+        )
+    return token
+
+
+def list_workspace_invites(workspace_id: int) -> list[dict[str, Any]]:
+    with _connect() as conn:
+        rows = _execute(
+            conn,
+            """
+            SELECT
+              id,
+              workspace_id,
+              email,
+              role,
+              token,
+              invited_by_user_id,
+              expires_at,
+              accepted_at,
+              created_at
+            FROM workspace_invites
+            WHERE workspace_id = ?
+            ORDER BY id DESC
+            """,
+            (int(workspace_id),),
+        ).fetchall()
+    return [_row_to_dict(row) for row in rows]
+
+
+def get_workspace_invite(token: str) -> dict[str, Any] | None:
+    with _connect() as conn:
+        row = _execute(
+            conn,
+            """
+            SELECT
+              id,
+              workspace_id,
+              email,
+              role,
+              token,
+              invited_by_user_id,
+              expires_at,
+              accepted_at,
+              created_at
+            FROM workspace_invites
+            WHERE token = ?
+            LIMIT 1
+            """,
+            (token,),
+        ).fetchone()
+    if row is None:
+        return None
+    return _row_to_dict(row)
+
+
+def accept_workspace_invite(*, token: str, user_id: int) -> dict[str, Any] | None:
+    invite = get_workspace_invite(token)
+    if invite is None:
+        return None
+    with _connect() as conn:
+        _execute(
+            conn,
+            """
+            UPDATE workspace_invites
+            SET accepted_at = COALESCE(accepted_at, ?)
+            WHERE token = ?
+            """,
+            (_utc_now_iso(), token),
+        )
+        _execute(
+            conn,
+            """
+            INSERT INTO workspace_members (workspace_id, user_id, role, created_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(workspace_id, user_id) DO UPDATE SET role = excluded.role
+            """,
+            (
+                int(invite["workspace_id"]),
+                int(user_id),
+                str(invite["role"]).lower(),
+                _utc_now_iso(),
+            ),
+        )
+    return get_workspace_invite(token)

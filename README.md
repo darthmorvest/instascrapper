@@ -47,7 +47,7 @@ cp .env.example .env
 ig-scrubber --output leads.csv --media-limit 30 --comments-per-media 200 --lookback-days 120
 ```
 
-## Web app mode (multi-account flow)
+## Web app mode (secure workspace flow)
 
 Start the web app:
 
@@ -62,17 +62,19 @@ Open:
 
 How it works:
 
-1. Add one or more Instagram account profiles (`label + account ID + access token`)
-2. In **Run Report**, select which account to run
-3. Optionally choose specific posts (multi-select) to scan **all comments** on those posts.
-4. Or run on recent posts by choosing dropdown values for lookback, posts to scan, comments/post, and lead cap.
+1. Create the first owner login (email/password).
+2. Add team members with invite links (owner/admin only).
+3. Add one or more Instagram account profiles (`label + account ID + access token`) or connect via Meta OAuth.
+4. In **Run Report**, choose account + lookback, then:
+   - choose specific posts/reels (manual selection scans all comments on selected posts), or
+   - run by dropdown defaults (posts/comments caps).
 5. Click **Run Report Now**.
-6. The app processes in short background-safe steps (live progress updates in-page, without full-page refresh loops).
+6. Runs process in resumable background-safe steps with live status polling.
 7. Download current/old reports from **Report History**.
 
 Defaults can be saved per account (media limit, comments per media, lookback days).
 
-If `IG_ACCESS_TOKEN` and `IG_BUSINESS_ACCOUNT_ID` are set in environment variables, the app auto-creates one default account on startup.
+Access tokens are server-side only and scoped by workspace.
 
 ## Deploy on a subdomain
 
@@ -132,12 +134,23 @@ git push -u origin main
 Optional for CLI-only workflows. Web profile mode stores credentials in app storage:
 
 - `DATABASE_URL` (recommended for persistent Supabase/Postgres storage)
+- `APP_SECRET_KEY` (required in production for secure session signing)
 - `IG_ACCESS_TOKEN`
 - `IG_BUSINESS_ACCOUNT_ID`
 - `IG_GRAPH_VERSION` (optional, e.g. `v21.0`)
 - `REQUEST_TIMEOUT_SECONDS` (optional)
 - `REQUEST_RETRY_COUNT` (optional)
 - `REQUEST_RETRY_BACKOFF_SECONDS` (optional)
+- `OPENAI_API_KEY` (optional AI scoring/enrichment)
+- `OPENAI_MODEL` (optional, default `gpt-4.1-mini`)
+
+Optional Meta OAuth (recommended for marketer-friendly onboarding):
+
+- `META_APP_ID`
+- `META_APP_SECRET`
+- `META_REDIRECT_URI` (optional; defaults to `/connect/meta/callback` absolute URL)
+- `META_GRAPH_VERSION` (optional; default from `IG_GRAPH_VERSION`)
+- `META_OAUTH_SCOPES` (optional override)
 
 #### 3.1) Supabase managed database (recommended)
 
@@ -195,6 +208,11 @@ Optional:
 - `OPENAI_API_KEY` (optional) - enables deeper AI lead scoring/summaries
 - `OPENAI_MODEL` (optional, default `gpt-4.1-mini`)
 - `OPENAI_BASE_URL` (optional, default `https://api.openai.com/v1`)
+- `APP_SECRET_KEY` (required for secure web login sessions)
+- `META_APP_ID` / `META_APP_SECRET` (optional; enables Meta OAuth account connection)
+- `META_REDIRECT_URI` (optional callback URL override)
+- `META_GRAPH_VERSION` (optional; defaults to IG graph version)
+- `META_OAUTH_SCOPES` (optional override)
 
 ### Enable AI enrichment in Vercel
 
@@ -211,6 +229,7 @@ The dashboard header shows whether AI enrichment is enabled.
 - `instagram_profile_url`
 - `is_verified`
 - `podcast_urls`
+- `podcast_genre`
 - `estimated_monthly_listeners`
 - `estimate_confidence`
 - `lead_score`
