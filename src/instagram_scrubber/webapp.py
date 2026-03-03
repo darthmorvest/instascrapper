@@ -313,24 +313,25 @@ INDEX_HTML = """
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>InstaScrapper | Podcast Lead Intelligence</title>
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Sora:wght@600;700;800&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Space+Grotesk:wght@600;700&display=swap');
 
     :root {
-      --bg-a: #eff7ff;
-      --bg-b: #eef9f3;
-      --panel: #ffffff;
-      --line: #d7e4ef;
-      --text: #10253a;
-      --sub: #4a647a;
-      --accent: #0b7285;
-      --accent-2: #0f766e;
+      --bg-a: #f3f8ff;
+      --bg-b: #eaf4ff;
+      --panel: rgba(255, 255, 255, 0.82);
+      --line: rgba(148, 163, 184, 0.26);
+      --text: #0f2037;
+      --sub: #4f657f;
+      --accent: #0f6fa9;
+      --accent-2: #2192bf;
       --good-bg: #dcfce7;
       --good-line: #86efac;
       --bad-bg: #fff1f2;
       --bad-line: #fecdd3;
-      --warn-bg: #fffbeb;
-      --warn-line: #fcd34d;
-      --shadow: 0 14px 32px rgba(8, 39, 68, 0.08);
+      --warn-bg: #f8fafc;
+      --warn-line: #cbd5e1;
+      --shadow: 0 14px 40px rgba(15, 23, 42, 0.11);
+      --ring: rgba(15, 111, 169, 0.22);
     }
 
     * { box-sizing: border-box; }
@@ -339,20 +340,20 @@ INDEX_HTML = """
       margin: 0;
       min-height: 100vh;
       color: var(--text);
-      font-family: "Manrope", "Avenir Next", "Segoe UI", sans-serif;
+      font-family: "Plus Jakarta Sans", "Avenir Next", sans-serif;
       background:
-        radial-gradient(circle at 10% 0%, #d7ecff 0%, rgba(215, 236, 255, 0) 40%),
-        radial-gradient(circle at 90% 5%, #dff8f0 0%, rgba(223, 248, 240, 0) 30%),
+        radial-gradient(circle at 7% -5%, #dbeafe 0%, rgba(219, 234, 254, 0) 45%),
+        radial-gradient(circle at 95% 8%, #cffafe 0%, rgba(207, 250, 254, 0) 36%),
         linear-gradient(180deg, var(--bg-a), var(--bg-b));
-      padding: 22px 12px 34px;
+      padding: 18px 12px 34px;
     }
 
     .shell {
-      max-width: 1200px;
+      max-width: 1240px;
       margin: 0 auto;
       display: grid;
-      gap: 12px;
-      animation: rise 420ms ease both;
+      gap: 14px;
+      animation: rise 460ms ease both;
     }
 
     @keyframes rise {
@@ -363,14 +364,15 @@ INDEX_HTML = """
     .card {
       background: var(--panel);
       border: 1px solid var(--line);
-      border-radius: 16px;
-      padding: 14px;
+      border-radius: 22px;
+      padding: 18px;
+      backdrop-filter: blur(16px);
       box-shadow: var(--shadow);
     }
 
     .hero {
       background:
-        linear-gradient(125deg, rgba(11, 114, 133, 0.07), rgba(15, 118, 110, 0.09) 55%, rgba(255, 255, 255, 0.9)),
+        linear-gradient(120deg, rgba(15, 111, 169, 0.11), rgba(33, 146, 191, 0.12) 55%, rgba(255, 255, 255, 0.92)),
         #fff;
     }
 
@@ -386,38 +388,40 @@ INDEX_HTML = """
     .brand {
       display: inline-flex;
       align-items: center;
-      border: 1px solid #b8d8de;
-      background: #f2fcfd;
-      color: #0b5666;
+      border: 1px solid rgba(33, 146, 191, 0.32);
+      background: rgba(255, 255, 255, 0.82);
+      color: #0f4d7a;
       border-radius: 999px;
-      padding: 5px 11px;
-      font-size: 0.78rem;
+      padding: 6px 12px;
+      font-size: 0.76rem;
       font-weight: 700;
-      letter-spacing: 0.2px;
+      letter-spacing: 0.42px;
       text-transform: uppercase;
     }
 
     h1 {
-      margin: 9px 0 4px;
-      font-family: "Sora", "Manrope", sans-serif;
-      font-size: 1.65rem;
-      line-height: 1.23;
+      margin: 10px 0 4px;
+      font-family: "Space Grotesk", "Plus Jakarta Sans", sans-serif;
+      font-size: 2rem;
+      line-height: 1.18;
+      letter-spacing: -0.02em;
     }
 
     h2 {
       margin: 0 0 8px;
-      font-family: "Sora", "Manrope", sans-serif;
-      font-size: 1.05rem;
+      font-family: "Space Grotesk", "Plus Jakarta Sans", sans-serif;
+      font-size: 1.06rem;
+      letter-spacing: -0.01em;
     }
 
-    .sub { margin: 0; color: var(--sub); font-size: 0.92rem; }
-    .muted { color: var(--sub); font-size: 0.86rem; }
+    .sub { margin: 0; color: var(--sub); font-size: 1rem; }
+    .muted { color: var(--sub); font-size: 0.88rem; }
 
     .flag {
       display: inline-flex;
-      margin-top: 8px;
+      margin-top: 10px;
       border-radius: 999px;
-      padding: 5px 10px;
+      padding: 6px 11px;
       font-size: 0.78rem;
       font-weight: 700;
       border: 1px solid;
@@ -434,9 +438,9 @@ INDEX_HTML = """
 
     .stat {
       border: 1px solid var(--line);
-      border-radius: 12px;
-      background: #fbfdff;
-      padding: 10px;
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.75);
+      padding: 12px;
     }
 
     .stat .label {
@@ -487,11 +491,19 @@ INDEX_HTML = """
     select {
       width: 100%;
       border: 1px solid var(--line);
-      border-radius: 10px;
-      padding: 9px;
+      border-radius: 12px;
+      padding: 10px 11px;
       font-size: 0.9rem;
       color: #0f172a;
-      background: #fff;
+      background: rgba(255, 255, 255, 0.96);
+      transition: border-color 160ms ease, box-shadow 160ms ease;
+    }
+
+    input:focus,
+    select:focus {
+      outline: none;
+      border-color: rgba(15, 111, 169, 0.5);
+      box-shadow: 0 0 0 3px var(--ring);
     }
 
     .actions {
@@ -505,24 +517,39 @@ INDEX_HTML = """
     button,
     .btn {
       border: 0;
-      border-radius: 10px;
-      padding: 9px 13px;
+      border-radius: 12px;
+      padding: 10px 14px;
       font-size: 0.88rem;
       font-weight: 700;
       cursor: pointer;
       color: #fff;
-      background: linear-gradient(140deg, var(--accent), var(--accent-2));
+      background: linear-gradient(145deg, var(--accent), var(--accent-2));
       text-decoration: none;
       display: inline-flex;
       align-items: center;
       justify-content: center;
+      transition: transform 120ms ease, box-shadow 160ms ease;
+      box-shadow: 0 8px 22px rgba(15, 111, 169, 0.23);
+    }
+
+    button:hover,
+    .btn:hover {
+      transform: translateY(-1px);
+    }
+
+    button:disabled {
+      opacity: 0.62;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
     }
 
     .btn.alt,
     button.alt {
-      background: #fff;
+      background: rgba(255, 255, 255, 0.96);
       color: #1f3f60;
-      border: 1px solid #bfd7ea;
+      border: 1px solid rgba(148, 163, 184, 0.35);
+      box-shadow: none;
     }
 
     table {
@@ -592,6 +619,34 @@ INDEX_HTML = """
       word-break: break-all;
     }
 
+    .manual-setup {
+      margin-top: 12px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.66);
+      padding: 10px 12px;
+    }
+
+    .manual-setup summary {
+      cursor: pointer;
+      font-weight: 700;
+      color: #254a6f;
+      list-style: none;
+    }
+
+    .manual-setup summary::-webkit-details-marker { display: none; }
+
+    .oauth-tip {
+      margin-top: 8px;
+      border: 1px solid rgba(148, 163, 184, 0.32);
+      border-radius: 12px;
+      padding: 10px 11px;
+      background: rgba(248, 250, 252, 0.88);
+      color: #334155;
+      font-size: 0.84rem;
+      line-height: 1.4;
+    }
+
     a { color: #0f4f8a; text-decoration: none; }
     a:hover { text-decoration: underline; }
 
@@ -638,9 +693,9 @@ INDEX_HTML = """
       </div>
       <div class="flag {{ 'ok' if ai_enabled else 'off' }}">AI Enrichment: {{ 'Enabled' if ai_enabled else 'Disabled (set OPENAI_API_KEY)' }}</div>
       {% if meta_oauth_enabled %}
-        <div class="muted">Meta OAuth available: marketers can connect Instagram without manually generating API tokens.</div>
+        <div class="oauth-tip">Meta Login is active. Team members can connect client Instagram accounts with one click and no manual token handling.</div>
       {% else %}
-        <div class="muted">Meta OAuth disabled until `META_APP_ID` and `META_APP_SECRET` are set.</div>
+        <div class="oauth-tip">Meta Login is not enabled on this deployment yet. Add `META_APP_ID`, `META_APP_SECRET`, and `META_REDIRECT_URI` in Vercel to remove manual API setup.</div>
       {% endif %}
     </section>
 
@@ -710,74 +765,81 @@ INDEX_HTML = """
     <section class="split">
       <article class="card">
         <h2>Account Setup</h2>
-        <p class="muted">Store one Instagram account per client. Token stays server-side in workspace storage.</p>
+        <p class="muted">Recommended flow: connect with Meta Login, pick the Instagram account, and save. No token copy/paste needed.</p>
         <div class="actions">
-          <a class="btn alt" href="{{ url_for('meta_connect_start') }}">Connect with Meta Login</a>
+          {% if meta_oauth_enabled %}
+            <a class="btn" href="{{ url_for('meta_connect_start') }}">Connect Instagram via Meta</a>
+          {% else %}
+            <button class="alt" type="button" disabled>Meta Login Requires Environment Setup</button>
+          {% endif %}
         </div>
-        <form method="post" action="{{ url_for('create_account') }}">
-          <div class="form-grid">
-            <div>
-              <label for="name">Account label</label>
-              <input id="name" name="name" value="{{ account_form.name }}" required />
+        <details class="manual-setup">
+          <summary>Manual API token setup (advanced)</summary>
+          <form method="post" action="{{ url_for('create_account') }}">
+            <div class="form-grid">
+              <div>
+                <label for="name">Account label</label>
+                <input id="name" name="name" value="{{ account_form.name }}" required />
+              </div>
+              <div>
+                <label for="business_account_id">Instagram Business Account ID</label>
+                <input id="business_account_id" name="business_account_id" value="{{ account_form.business_account_id }}" placeholder="1784..." required />
+              </div>
+              <div>
+                <label for="access_token">Access token</label>
+                <input id="access_token" name="access_token" value="{{ account_form.access_token }}" placeholder="Raw token only" required />
+              </div>
             </div>
-            <div>
-              <label for="business_account_id">Instagram Business Account ID</label>
-              <input id="business_account_id" name="business_account_id" value="{{ account_form.business_account_id }}" placeholder="1784..." required />
-            </div>
-            <div>
-              <label for="access_token">Access token</label>
-              <input id="access_token" name="access_token" value="{{ account_form.access_token }}" placeholder="Raw token only" required />
-            </div>
-          </div>
 
-          <div class="form-grid">
-            <div>
-              <label for="graph_version">Graph version</label>
-              <input id="graph_version" name="graph_version" value="{{ account_form.graph_version }}" />
+            <div class="form-grid">
+              <div>
+                <label for="graph_version">Graph version</label>
+                <input id="graph_version" name="graph_version" value="{{ account_form.graph_version }}" />
+              </div>
+              <div>
+                <label for="timeout_seconds">Timeout seconds</label>
+                <input id="timeout_seconds" name="timeout_seconds" type="number" min="1" value="{{ account_form.timeout_seconds }}" />
+              </div>
+              <div>
+                <label for="retry_count">Retry count</label>
+                <input id="retry_count" name="retry_count" type="number" min="0" value="{{ account_form.retry_count }}" />
+              </div>
+              <div>
+                <label for="retry_backoff_seconds">Retry backoff seconds</label>
+                <input id="retry_backoff_seconds" name="retry_backoff_seconds" type="number" min="0" step="0.1" value="{{ account_form.retry_backoff_seconds }}" />
+              </div>
+              <div>
+                <label for="default_media_limit">Default posts</label>
+                <input id="default_media_limit" name="default_media_limit" type="number" min="1" value="{{ account_form.default_media_limit }}" />
+              </div>
+              <div>
+                <label for="default_comments_per_media">Default comments/post</label>
+                <input id="default_comments_per_media" name="default_comments_per_media" type="number" min="1" value="{{ account_form.default_comments_per_media }}" />
+              </div>
+              <div>
+                <label for="default_lookback_days">Default lookback days</label>
+                <input id="default_lookback_days" name="default_lookback_days" type="number" min="1" value="{{ account_form.default_lookback_days }}" />
+              </div>
+              <div>
+                <label for="default_max_profiles">Default max leads</label>
+                <input id="default_max_profiles" name="default_max_profiles" type="number" min="1" value="{{ account_form.default_max_profiles }}" />
+              </div>
+              <div>
+                <label for="team_member_user_ids">Team members for this account</label>
+                <select id="team_member_user_ids" name="team_member_user_ids" multiple size="5">
+                  {% for m in members %}
+                    <option value="{{ m.user_id }}" {% if m.user_id in account_form.team_member_user_ids %}selected{% endif %}>{{ m.full_name }} ({{ m.role }})</option>
+                  {% endfor %}
+                </select>
+              </div>
             </div>
-            <div>
-              <label for="timeout_seconds">Timeout seconds</label>
-              <input id="timeout_seconds" name="timeout_seconds" type="number" min="1" value="{{ account_form.timeout_seconds }}" />
-            </div>
-            <div>
-              <label for="retry_count">Retry count</label>
-              <input id="retry_count" name="retry_count" type="number" min="0" value="{{ account_form.retry_count }}" />
-            </div>
-            <div>
-              <label for="retry_backoff_seconds">Retry backoff seconds</label>
-              <input id="retry_backoff_seconds" name="retry_backoff_seconds" type="number" min="0" step="0.1" value="{{ account_form.retry_backoff_seconds }}" />
-            </div>
-            <div>
-              <label for="default_media_limit">Default posts</label>
-              <input id="default_media_limit" name="default_media_limit" type="number" min="1" value="{{ account_form.default_media_limit }}" />
-            </div>
-            <div>
-              <label for="default_comments_per_media">Default comments/post</label>
-              <input id="default_comments_per_media" name="default_comments_per_media" type="number" min="1" value="{{ account_form.default_comments_per_media }}" />
-            </div>
-            <div>
-              <label for="default_lookback_days">Default lookback days</label>
-              <input id="default_lookback_days" name="default_lookback_days" type="number" min="1" value="{{ account_form.default_lookback_days }}" />
-            </div>
-            <div>
-              <label for="default_max_profiles">Default max leads</label>
-              <input id="default_max_profiles" name="default_max_profiles" type="number" min="1" value="{{ account_form.default_max_profiles }}" />
-            </div>
-            <div>
-              <label for="team_member_user_ids">Team members for this account</label>
-              <select id="team_member_user_ids" name="team_member_user_ids" multiple size="5">
-                {% for m in members %}
-                  <option value="{{ m.user_id }}" {% if m.user_id in account_form.team_member_user_ids %}selected{% endif %}>{{ m.full_name }} ({{ m.role }})</option>
-                {% endfor %}
-              </select>
-            </div>
-          </div>
 
-          <div class="actions">
-            <button type="submit">Save Account</button>
-          </div>
-          <p class="muted">Storage mode: {{ storage_mode }}</p>
-        </form>
+            <div class="actions">
+              <button type="submit">Save Account</button>
+            </div>
+            <p class="muted">Storage mode: {{ storage_mode }}</p>
+          </form>
+        </details>
       </article>
 
       <article class="card">
@@ -1950,7 +2012,15 @@ def create_app() -> Flask:
     @_require_auth
     def meta_connect_start():
         if not _meta_oauth_enabled():
-            return redirect(url_for("index", error="Meta OAuth is not configured on this deployment."))
+            return redirect(
+                url_for(
+                    "index",
+                    message=(
+                        "Meta Login is not configured yet. Add META_APP_ID, META_APP_SECRET, "
+                        "and META_REDIRECT_URI in Vercel Project Settings -> Environment Variables."
+                    ),
+                )
+            )
 
         state = secrets.token_urlsafe(24)
         session["meta_oauth_state"] = state
@@ -1970,7 +2040,15 @@ def create_app() -> Flask:
     @_require_auth
     def meta_connect_callback():
         if not _meta_oauth_enabled():
-            return redirect(url_for("index", error="Meta OAuth is not configured on this deployment."))
+            return redirect(
+                url_for(
+                    "index",
+                    message=(
+                        "Meta Login is not configured yet. Add META_APP_ID, META_APP_SECRET, "
+                        "and META_REDIRECT_URI in Vercel Project Settings -> Environment Variables."
+                    ),
+                )
+            )
 
         expected_state = session.get("meta_oauth_state")
         returned_state = request.args.get("state", "")
