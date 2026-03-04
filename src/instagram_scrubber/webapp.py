@@ -2433,7 +2433,13 @@ def create_app() -> Flask:
             # resolve those IDs directly so setup can continue.
             if not accounts:
                 ig_target_ids: list[str] = []
-                for scope_name in ("instagram_basic", "instagram_manage_comments"):
+                ig_scope_names = (
+                    "instagram_basic",
+                    "instagram_business_basic",
+                    "instagram_manage_comments",
+                    "instagram_business_manage_comments",
+                )
+                for scope_name in ig_scope_names:
                     for target_id in granular_targets.get(scope_name, []):
                         if target_id and target_id not in ig_target_ids:
                             ig_target_ids.append(target_id)
@@ -2468,12 +2474,24 @@ def create_app() -> Flask:
                         pages_fallback_errors.append(f"IG {ig_id}: {ig_lookup_err}")
 
             if not accounts:
-                missing_scopes = [
-                    scope for scope in ("pages_show_list", "instagram_basic", "instagram_manage_comments") if scope not in granted_scopes
-                ]
+                granted_scope_set = {scope.strip() for scope in granted_scopes if scope.strip()}
+
+                def _has_any(*names: str) -> bool:
+                    return any(name in granted_scope_set for name in names)
+
+                missing_scopes: list[str] = []
+                if not _has_any("pages_show_list"):
+                    missing_scopes.append("pages_show_list")
+                if not _has_any("instagram_basic", "instagram_business_basic"):
+                    missing_scopes.append("instagram_basic|instagram_business_basic")
+                if not _has_any("instagram_manage_comments", "instagram_business_manage_comments"):
+                    missing_scopes.append("instagram_manage_comments|instagram_business_manage_comments")
                 missing_scopes_text = ""
                 if missing_scopes:
                     missing_scopes_text = f" Missing permissions on granted token: {', '.join(missing_scopes)}."
+                granted_scopes_text = ""
+                if granted_scopes:
+                    granted_scopes_text = f" Granted scopes: {', '.join(sorted(granted_scope_set))}."
 
                 fallback_hint = ""
                 if pages_fallback_errors:
@@ -2489,12 +2507,12 @@ def create_app() -> Flask:
                         "ensure the account is Professional (Business or Creator), then reconnect. "
                         "If linkage is already correct, verify the app's Facebook Login for Business "
                         "configuration includes pages_show_list + instagram_basic and that this user has "
-                        f"access to the linked Page.{missing_scopes_text}{fallback_hint}"
+                        f"access to the linked Page.{missing_scopes_text}{granted_scopes_text}{fallback_hint}"
                     )
                 raise RuntimeError(
                     "Meta login succeeded but returned zero accessible Facebook Pages. "
                     "Log in with a user who has Page access to the Instagram-linked client page."
-                    f"{missing_scopes_text}{fallback_hint}"
+                    f"{missing_scopes_text}{granted_scopes_text}{fallback_hint}"
                 )
 
             print(
