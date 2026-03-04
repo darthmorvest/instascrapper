@@ -2333,6 +2333,34 @@ def create_app() -> Flask:
             ).json()
             long_token = str(long_resp.get("access_token") or short_token).strip()
 
+            granted_scopes: list[str] = []
+            granular_targets: dict[str, list[str]] = {}
+            try:
+                debug_resp = requests.get(
+                    f"https://graph.facebook.com/{graph_version}/debug_token",
+                    params={
+                        "input_token": long_token,
+                        "access_token": f"{app_id}|{app_secret}",
+                    },
+                    timeout=25,
+                ).json()
+                debug_data = debug_resp.get("data") if isinstance(debug_resp, dict) else None
+                if isinstance(debug_data, dict):
+                    raw_scopes = debug_data.get("scopes") or []
+                    granted_scopes = [str(scope).strip() for scope in raw_scopes if str(scope).strip()]
+                    for entry in debug_data.get("granular_scopes") or []:
+                        if not isinstance(entry, dict):
+                            continue
+                        scope_name = str(entry.get("scope") or "").strip()
+                        if not scope_name:
+                            continue
+                        targets = [str(item).strip() for item in (entry.get("target_ids") or []) if str(item).strip()]
+                        if targets:
+                            granular_targets.setdefault(scope_name, []).extend(targets)
+            except Exception:  # noqa: BLE001
+                # Debug token enrichment is best-effort only.
+                pass
+
             pages_resp = requests.get(
                 f"https://graph.facebook.com/{graph_version}/me/accounts",
                 params={
@@ -2400,7 +2428,56 @@ def create_app() -> Flask:
                     }
                 )
 
+            # If page linkage fields are empty but Business Login granted IG target IDs,
+            # resolve those IDs directly so setup can continue.
             if not accounts:
+                ig_target_ids: list[str] = []
+                for scope_name in ("instagram_basic", "instagram_manage_comments"):
+                    for target_id in granular_targets.get(scope_name, []):
+                        if target_id and target_id not in ig_target_ids:
+                            ig_target_ids.append(target_id)
+
+                for ig_id in ig_target_ids:
+                    try:
+                        ig_resp = requests.get(
+                            f"https://graph.facebook.com/{graph_version}/{ig_id}",
+                            params={
+                                "fields": "id,username",
+                                "access_token": long_token,
+                            },
+                            timeout=25,
+                        ).json()
+                        if "error" in ig_resp:
+                            pages_fallback_errors.append(
+                                f"IG {ig_id}: {_friendly_api_error_text(str(ig_resp['error']))}"
+                            )
+                            continue
+
+                        business_id = str(ig_resp.get("id") or "").strip() or ig_id
+                        username = str(ig_resp.get("username") or "").strip()
+                        display_name = f"@{username}" if username else f"Instagram {business_id}"
+                        accounts.append(
+                            {
+                                "business_account_id": business_id,
+                                "display_name": display_name,
+                                "page_access_token": long_token,
+                            }
+                        )
+                    except Exception as ig_lookup_err:  # noqa: BLE001
+                        pages_fallback_errors.append(f"IG {ig_id}: {ig_lookup_err}")
+
+            if not accounts:
+                missing_scopes = [
+                    scope for scope in ("pages_show_list", "instagram_basic", "instagram_manage_comments") if scope not in granted_scopes
+                ]
+                missing_scopes_text = ""
+                if missing_scopes:
+                    missing_scopes_text = f" Missing permissions on granted token: {', '.join(missing_scopes)}."
+
+                fallback_hint = ""
+                if pages_fallback_errors:
+                    fallback_hint = f" API detail: {pages_fallback_errors[0]}"
+
                 if pages:
                     page_preview = ", ".join(pages_without_ig[:5]) if pages_without_ig else "your accessible pages"
                     if len(pages_without_ig) > 5:
@@ -2411,11 +2488,12 @@ def create_app() -> Flask:
                         "ensure the account is Professional (Business or Creator), then reconnect. "
                         "If linkage is already correct, verify the app's Facebook Login for Business "
                         "configuration includes pages_show_list + instagram_basic and that this user has "
-                        "access to the linked Page."
+                        f"access to the linked Page.{missing_scopes_text}{fallback_hint}"
                     )
                 raise RuntimeError(
                     "Meta login succeeded but returned zero accessible Facebook Pages. "
                     "Log in with a user who has Page access to the Instagram-linked client page."
+                    f"{missing_scopes_text}{fallback_hint}"
                 )
 
             print(
@@ -2425,6 +2503,8 @@ def create_app() -> Flask:
                     "accounts_found": len(accounts),
                     "pages_without_ig": pages_without_ig[:10],
                     "pages_fallback_errors": pages_fallback_errors[:10],
+                    "granted_scopes": granted_scopes,
+                    "granular_target_counts": {k: len(v) for k, v in granular_targets.items()},
                 },
                 flush=True,
             )
