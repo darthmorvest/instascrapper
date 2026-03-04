@@ -2568,7 +2568,8 @@ def create_app() -> Flask:
             return redirect(url_for("index", error="Account label is required."))
 
         graph_version = str(meta_connect.get("graph_version") or "v21.0")
-        access_token = _sanitize_access_token(str(account.get("page_access_token") or meta_connect.get("long_token") or ""))
+        # Prefer the long-lived user token from OAuth exchange. Page tokens can miss IG scopes.
+        access_token = _sanitize_access_token(str(meta_connect.get("long_token") or account.get("page_access_token") or ""))
         business_account_id = _sanitize_business_account_id(str(account.get("business_account_id") or ""))
 
         if _is_placeholder_credential(access_token) or _is_placeholder_credential(business_account_id):
