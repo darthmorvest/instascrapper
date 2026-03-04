@@ -2352,18 +2352,45 @@ def create_app() -> Flask:
             accounts: list[dict] = []
             pages = pages_resp.get("data", [])
             pages_without_ig: list[str] = []
+            pages_fallback_errors: list[str] = []
 
             for page in pages:
                 page_name = str(page.get("name") or "").strip()
                 page_id = str(page.get("id") or "").strip()
                 page_label = page_name or page_id or "(unnamed page)"
+                page_token = str(page.get("access_token") or "").strip() or long_token
                 ig_data = page.get("instagram_business_account") or page.get("connected_instagram_account") or {}
+
+                # Some Meta Business Login setups return page rows but omit IG linkage in /me/accounts.
+                # Fallback: resolve IG linkage directly from the page node using a page-scoped token.
+                if not ig_data and page_id and page_token:
+                    try:
+                        page_ig_resp = requests.get(
+                            f"https://graph.facebook.com/{graph_version}/{page_id}",
+                            params={
+                                "fields": "instagram_business_account{id,username},connected_instagram_account{id,username}",
+                                "access_token": page_token,
+                            },
+                            timeout=25,
+                        ).json()
+                        if "error" not in page_ig_resp:
+                            ig_data = (
+                                page_ig_resp.get("instagram_business_account")
+                                or page_ig_resp.get("connected_instagram_account")
+                                or {}
+                            )
+                        else:
+                            pages_fallback_errors.append(
+                                f"{page_label}: {_friendly_api_error_text(str(page_ig_resp['error']))}"
+                            )
+                    except Exception as page_lookup_err:  # noqa: BLE001
+                        pages_fallback_errors.append(f"{page_label}: {page_lookup_err}")
+
                 business_id = str(ig_data.get("id") or "").strip()
                 if not business_id:
                     pages_without_ig.append(page_label)
                     continue
                 username = str(ig_data.get("username") or "").strip()
-                page_token = str(page.get("access_token") or "").strip() or long_token
                 display_name = f"{page_label} ({'@' + username if username else business_id})"
                 accounts.append(
                     {
@@ -2381,7 +2408,10 @@ def create_app() -> Flask:
                     raise RuntimeError(
                         "Meta login found Facebook Pages but none had a linked Instagram professional account "
                         f"({page_preview}). In Meta Business Suite, link the Instagram account to the Page, "
-                        "ensure the account is Professional (Business or Creator), then reconnect."
+                        "ensure the account is Professional (Business or Creator), then reconnect. "
+                        "If linkage is already correct, verify the app's Facebook Login for Business "
+                        "configuration includes pages_show_list + instagram_basic and that this user has "
+                        "access to the linked Page."
                     )
                 raise RuntimeError(
                     "Meta login succeeded but returned zero accessible Facebook Pages. "
@@ -2394,6 +2424,7 @@ def create_app() -> Flask:
                     "pages_total": len(pages),
                     "accounts_found": len(accounts),
                     "pages_without_ig": pages_without_ig[:10],
+                    "pages_fallback_errors": pages_fallback_errors[:10],
                 },
                 flush=True,
             )
