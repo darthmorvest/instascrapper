@@ -2248,6 +2248,7 @@ def create_app() -> Flask:
             "redirect_uri": _meta_redirect_uri(),
             "state": state,
             "response_type": "code",
+            "auth_type": "rerequest",
         }
         config_id = _meta_config_id()
         if config_id:
