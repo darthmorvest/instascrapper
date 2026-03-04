@@ -2300,7 +2300,7 @@ def create_app() -> Flask:
             return redirect(url_for("index", error=f"Meta OAuth failed: {error_reason}"))
 
         graph_version = _meta_graph_version()
-        app_id = os.getenv("META_APP_ID", "").strip()
+        app_id = _meta_client_id()
         app_secret = os.getenv("META_APP_SECRET", "").strip()
 
         try:
@@ -2336,7 +2336,11 @@ def create_app() -> Flask:
             pages_resp = requests.get(
                 f"https://graph.facebook.com/{graph_version}/me/accounts",
                 params={
-                    "fields": "id,name,access_token,instagram_business_account{id,username}",
+                    "fields": (
+                        "id,name,access_token,"
+                        "instagram_business_account{id,username},"
+                        "connected_instagram_account{id,username}"
+                    ),
                     "limit": 100,
                     "access_token": long_token,
                 },
@@ -2346,15 +2350,21 @@ def create_app() -> Flask:
                 raise RuntimeError(_friendly_api_error_text(str(pages_resp["error"])))
 
             accounts: list[dict] = []
-            for page in pages_resp.get("data", []):
-                ig_data = page.get("instagram_business_account") or {}
+            pages = pages_resp.get("data", [])
+            pages_without_ig: list[str] = []
+
+            for page in pages:
+                page_name = str(page.get("name") or "").strip()
+                page_id = str(page.get("id") or "").strip()
+                page_label = page_name or page_id or "(unnamed page)"
+                ig_data = page.get("instagram_business_account") or page.get("connected_instagram_account") or {}
                 business_id = str(ig_data.get("id") or "").strip()
                 if not business_id:
+                    pages_without_ig.append(page_label)
                     continue
                 username = str(ig_data.get("username") or "").strip()
-                page_name = str(page.get("name") or "").strip()
                 page_token = str(page.get("access_token") or "").strip() or long_token
-                display_name = f"{page_name} ({'@' + username if username else business_id})"
+                display_name = f"{page_label} ({'@' + username if username else business_id})"
                 accounts.append(
                     {
                         "business_account_id": business_id,
@@ -2364,9 +2374,29 @@ def create_app() -> Flask:
                 )
 
             if not accounts:
+                if pages:
+                    page_preview = ", ".join(pages_without_ig[:5]) if pages_without_ig else "your accessible pages"
+                    if len(pages_without_ig) > 5:
+                        page_preview += ", ..."
+                    raise RuntimeError(
+                        "Meta login found Facebook Pages but none had a linked Instagram professional account "
+                        f"({page_preview}). In Meta Business Suite, link the Instagram account to the Page, "
+                        "ensure the account is Professional (Business or Creator), then reconnect."
+                    )
                 raise RuntimeError(
-                    "No Instagram Business accounts found on this Meta login. Ensure the user has page/account access."
+                    "Meta login succeeded but returned zero accessible Facebook Pages. "
+                    "Log in with a user who has Page access to the Instagram-linked client page."
                 )
+
+            print(
+                "[meta_oauth_accounts]",
+                {
+                    "pages_total": len(pages),
+                    "accounts_found": len(accounts),
+                    "pages_without_ig": pages_without_ig[:10],
+                },
+                flush=True,
+            )
 
             session["meta_connect"] = {
                 "graph_version": graph_version,
