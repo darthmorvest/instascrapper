@@ -35,6 +35,31 @@ PODCAST_HOST_HINTS = (
     "megaphone.fm",
 )
 
+PODCAST_BIO_HINTS = (
+    "podcast",
+    "podcasts",
+    "new episode",
+    "latest episode",
+    "listen now",
+    "listen to",
+)
+
+PODCAST_ROLE_HINTS = (
+    "host",
+    "co-host",
+    "cohost",
+    "founder of",
+)
+
+PODCAST_PLATFORM_HINTS = (
+    "spotify",
+    "apple podcasts",
+    "youtube",
+    "buzzsprout",
+    "rss",
+    "substack",
+)
+
 GENRE_HINTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Business & Marketing", ("business", "entrepreneur", "founder", "marketing", "sales", "startup")),
     ("Health & Wellness", ("wellness", "fitness", "nutrition", "mental health", "mindset", "health")),
@@ -99,6 +124,55 @@ def infer_podcast_genre(*, biography: str | None, podcast_urls: list[str]) -> st
             best_score = score
             best_genre = genre
     return best_genre
+
+
+def infer_podcast_signal(
+    *,
+    biography: str | None,
+    website: str | None,
+    podcast_urls: list[str],
+    podcast_genre: str | None,
+) -> tuple[int, list[str]]:
+    bio = (biography or "").lower()
+    site = (website or "").lower()
+    combined = " ".join(part for part in (bio, site) if part).strip()
+    score = 0
+    reasons: list[str] = []
+
+    if podcast_urls:
+        score += 5
+        reasons.append("explicit_podcast_url")
+
+    if any(hint in bio for hint in PODCAST_BIO_HINTS):
+        score += 4
+        reasons.append("bio_mentions_podcast_or_episode")
+
+    if any(role in bio for role in PODCAST_ROLE_HINTS) and any(
+        hint in combined for hint in ("podcast", "show", "episode", "listen")
+    ):
+        score += 3
+        reasons.append("bio_mentions_host_role")
+
+    if "podcast" in site:
+        score += 2
+        reasons.append("website_mentions_podcast")
+
+    if any(hint in combined for hint in PODCAST_PLATFORM_HINTS) and any(
+        hint in combined for hint in ("podcast", "show", "episode", "listen")
+    ):
+        score += 2
+        reasons.append("platform_or_listen_hint")
+
+    if podcast_genre and any(hint in combined for hint in ("podcast", "show", "episode", "listen")):
+        score += 1
+        reasons.append("genre_inferred_with_show_context")
+
+    deduped_reasons = sorted(set(reasons))
+    return (score, deduped_reasons)
+
+
+def profile_has_podcast_signal(profile: ProfileEnrichment) -> bool:
+    return bool(profile.podcast_urls) or profile.podcast_signal_score >= 3
 
 
 def crawl_website_for_hints(
@@ -170,6 +244,17 @@ def enrich_profile(client: InstagramGraphClient, username: str) -> ProfileEnrich
         biography=profile.biography,
         podcast_urls=profile.podcast_urls,
     )
+    signal_score, signal_sources = infer_podcast_signal(
+        biography=profile.biography,
+        website=profile.website,
+        podcast_urls=profile.podcast_urls,
+        podcast_genre=profile.podcast_genre,
+    )
+    profile.podcast_signal_score = signal_score
+    profile.podcast_signal_sources = signal_sources
     if profile.podcast_genre:
         profile.notes.append(f"podcast_genre_inferred={profile.podcast_genre}")
+    if signal_sources:
+        profile.notes.append(f"podcast_signal_score={signal_score}")
+        profile.notes.append(f"podcast_signal_sources={','.join(signal_sources)}")
     return profile

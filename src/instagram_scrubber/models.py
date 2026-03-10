@@ -28,6 +28,8 @@ class ProfileEnrichment:
     followers_count: int | None = None
     podcast_urls: list[str] = field(default_factory=list)
     podcast_genre: str | None = None
+    podcast_signal_score: int = 0
+    podcast_signal_sources: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
 

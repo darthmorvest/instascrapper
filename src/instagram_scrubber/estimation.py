@@ -19,6 +19,9 @@ def estimate_monthly_listeners(profile: ProfileEnrichment) -> ListenerEstimate:
     if profile.podcast_urls:
         multiplier *= 1.35
         signals.append("podcast_url_multiplier=1.35")
+    elif profile.podcast_signal_score >= 3:
+        multiplier *= 1.18
+        signals.append(f"inferred_podcast_signal_multiplier=1.18(score={profile.podcast_signal_score})")
 
     if profile.website:
         multiplier *= 1.05
@@ -38,6 +41,8 @@ def estimate_monthly_listeners(profile: ProfileEnrichment) -> ListenerEstimate:
         confidence += 0.2
     if profile.podcast_urls:
         confidence += 0.25
+    elif profile.podcast_signal_score >= 3:
+        confidence += 0.15
     if profile.website:
         confidence += 0.15
     confidence = round(min(confidence, 0.95), 2)
@@ -47,4 +52,3 @@ def estimate_monthly_listeners(profile: ProfileEnrichment) -> ListenerEstimate:
         confidence=confidence,
         explanation=", ".join(signals),
     )
-

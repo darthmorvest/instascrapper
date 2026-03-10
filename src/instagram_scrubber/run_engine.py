@@ -10,7 +10,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from .ai_enrichment import ai_enabled, enrich_leads_with_ai
 from .config import build_settings
-from .enrichment import enrich_profile
+from .enrichment import enrich_profile, profile_has_podcast_signal
 from .estimation import estimate_monthly_listeners
 from .exporters import render_csv, write_csv_content
 from .instagram_api import InstagramGraphClient
@@ -520,7 +520,7 @@ def process_run_step(
                             state["stats"]["not_verified"] = int(
                                 state["stats"].get("not_verified", 0)
                             ) + 1
-                        elif not profile_data.podcast_urls:
+                        elif not profile_has_podcast_signal(profile_data):
                             state["stats"]["missing_podcast"] = int(
                                 state["stats"].get("missing_podcast", 0)
                             ) + 1

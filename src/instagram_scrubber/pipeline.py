@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from .enrichment import enrich_profile
+from .enrichment import enrich_profile, profile_has_podcast_signal
 from .estimation import estimate_monthly_listeners
 from .instagram_api import InstagramGraphClient
 from .models import CommentInteraction, LeadRecord
@@ -45,7 +45,7 @@ def build_leads(
         profile = enrich_profile(client, canonical_username)
         if profile.is_verified is not True:
             continue
-        if not profile.podcast_urls:
+        if not profile_has_podcast_signal(profile):
             continue
 
         estimate = estimate_monthly_listeners(profile)
