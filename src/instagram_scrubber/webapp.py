@@ -5,9 +5,11 @@ import os
 import re
 import secrets
 import sqlite3
+import time
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 from pathlib import Path
+from typing import Any
 from urllib.parse import parse_qs, urlencode, urlparse
 
 import requests
@@ -39,6 +41,7 @@ from .storage import (
     init_db,
     is_ephemeral_storage,
     list_profiles,
+    list_active_runs,
     list_runs,
     list_user_workspaces,
     list_workspace_invites,
@@ -1076,7 +1079,9 @@ INDEX_HTML = """
                 </td>
                 <td>
                   {% if run.output_filename %}
-                    <a href="{{ url_for('download_output', filename=run.output_filename) }}">Download CSV</a>
+                    <a href="{{ url_for('download_output', filename=run.output_filename) }}">
+                      Download CSV{% if run.lead_count is not none %} ({{ run.lead_count }} leads){% endif %}
+                    </a>
                   {% elif run.error_display %}
                     {{ run.error_display }}
                   {% else %}
@@ -1130,13 +1135,14 @@ INDEX_HTML = """
       (function () {
         const endpoint = "{{ url_for('run_status', run_id=active_run.id) }}";
         const finishUrl = "{{ url_for('index', active_run_id=active_run.id, profile_id=run_form.profile_id) }}";
+        const advanceFlag = "{{ '1' if run_status_auto_advance else '0' }}";
         const progressMessage = document.getElementById("run-progress-message");
         const progressFill = document.getElementById("run-progress-fill");
         const progressCount = document.getElementById("run-progress-count");
 
         async function tick() {
           try {
-            const res = await fetch(endpoint + "?advance=1&t=" + Date.now(), {
+            const res = await fetch(endpoint + "?advance=" + advanceFlag + "&t=" + Date.now(), {
               cache: "no-store",
               headers: { "Accept": "application/json" }
             });
@@ -1715,6 +1721,56 @@ def _meta_scopes() -> str:
     ).strip()
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name, "").strip().lower()
+    if not raw:
+        return default
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _background_runner_enabled() -> bool:
+    return _env_bool("BACKGROUND_RUNNER_ENABLED", default=False)
+
+
+def _background_runner_secrets() -> list[str]:
+    values: list[str] = []
+    for key in ("RUNNER_SECRET", "CRON_SECRET"):
+        candidate = os.getenv(key, "").strip()
+        if candidate:
+            values.append(candidate)
+    return values
+
+
+def _extract_runner_token() -> str:
+    auth = request.headers.get("Authorization", "").strip()
+    if auth.lower().startswith("bearer "):
+        token = auth.split(" ", 1)[1].strip()
+        if token:
+            return token
+
+    token = request.headers.get("X-Runner-Secret", "").strip()
+    if token:
+        return token
+
+    token = request.args.get("token", "").strip()
+    if token:
+        return token
+
+    return ""
+
+
+def _runner_request_authorized() -> bool:
+    secrets_list = _background_runner_secrets()
+    if not secrets_list:
+        return False
+
+    provided = _extract_runner_token()
+    if not provided:
+        return False
+
+    return any(secrets.compare_digest(provided, expected) for expected in secrets_list)
+
+
 def _invite_is_expired(invite: dict) -> bool:
     expires_at = _parse_iso(str(invite.get("expires_at") or ""))
     if expires_at is None:
@@ -1821,6 +1877,7 @@ def _render_dashboard(
     selected_profile_id: int | None = None,
     active_run: dict | None = None,
     auto_continue: bool = False,
+    run_status_auto_advance: bool | None = None,
 ):
     members = list_workspace_members(workspace_id)
     raw_profiles = list_profiles(workspace_id=workspace_id)
@@ -1862,6 +1919,9 @@ def _render_dashboard(
 
     if account_form is None:
         account_form = _default_account_form()
+
+    if run_status_auto_advance is None:
+        run_status_auto_advance = not _background_runner_enabled()
 
     active_run_view = _apply_run_scope_fields(dict(active_run)) if active_run is not None else None
 
@@ -1920,6 +1980,7 @@ def _render_dashboard(
         preview=preview,
         active_run=active_run_view,
         auto_continue=auto_continue,
+        run_status_auto_advance=run_status_auto_advance,
         is_ephemeral=is_ephemeral_storage(),
         ai_enabled=ai_enabled(),
         meta_oauth_enabled=_meta_oauth_enabled(),
@@ -1975,6 +2036,74 @@ def create_app() -> Flask:
             body=TERMS_BODY_HTML,
         )
 
+    @app.route("/internal/runner/tick", methods=["GET", "POST"])
+    def internal_runner_tick():
+        if not _background_runner_enabled():
+            return jsonify({"ok": False, "error": "Background runner is disabled."}), 409
+
+        if not _background_runner_secrets():
+            return jsonify({"ok": False, "error": "Runner secret is not configured."}), 503
+
+        if not _runner_request_authorized():
+            return jsonify({"ok": False, "error": "Unauthorized"}), 401
+
+        try:
+            max_runs = max(1, min(int(os.getenv("BACKGROUND_RUNNER_MAX_RUNS", "2")), 25))
+        except ValueError:
+            max_runs = 2
+
+        try:
+            max_seconds = max(3.0, min(float(os.getenv("BACKGROUND_RUNNER_MAX_SECONDS", "20")), 55.0))
+        except ValueError:
+            max_seconds = 20.0
+
+        started = time.monotonic()
+        active_runs = list_active_runs(limit=max_runs * 3)
+        processed: list[dict[str, Any]] = []
+        failures: list[dict[str, Any]] = []
+
+        for row in active_runs:
+            if len(processed) >= max_runs:
+                break
+            if time.monotonic() - started >= max_seconds:
+                break
+
+            run_id = int(row["id"])
+            workspace_id = int(row["workspace_id"])
+            try:
+                updated = process_run_step(run_id=run_id, output_dir=OUTPUT_DIR, workspace_id=workspace_id)
+                processed.append(
+                    {
+                        "run_id": run_id,
+                        "workspace_id": workspace_id,
+                        "status": str(updated.get("status") or ""),
+                        "phase": str(updated.get("phase") or ""),
+                        "progress_current": int(updated.get("progress_current") or 0),
+                        "progress_total": int(updated.get("progress_total") or 0),
+                    }
+                )
+            except Exception as err:  # noqa: BLE001
+                failures.append(
+                    {
+                        "run_id": run_id,
+                        "workspace_id": workspace_id,
+                        "error": _friendly_api_error_text(str(err))[:300],
+                    }
+                )
+
+        return jsonify(
+            {
+                "ok": True,
+                "runner_enabled": True,
+                "queued_or_running_seen": len(active_runs),
+                "processed_count": len(processed),
+                "failed_count": len(failures),
+                "processed": processed,
+                "failures": failures,
+                "elapsed_ms": int((time.monotonic() - started) * 1000),
+            }
+        )
+
     @app.get("/")
     @_require_auth
     def index():
@@ -2017,11 +2146,20 @@ def create_app() -> Flask:
             elif status == "success":
                 preview = _preview_from_run(active_run)
                 if active_run.get("output_filename"):
-                    message = (
-                        f"Report complete for {active_run.get('profile_name')}. "
-                        f"Found {active_run.get('lead_count', 0)} leads. "
-                        "Use Report History to download CSV."
-                    )
+                    lead_count = int(active_run.get("lead_count") or 0)
+                    if lead_count > 0:
+                        message = (
+                            f"Report complete for {active_run.get('profile_name')}. "
+                            f"Found {lead_count} leads. "
+                            "Use Report History to download CSV."
+                        )
+                    else:
+                        detail = str(active_run.get("progress_message") or "Completed with 0 leads.")
+                        message = (
+                            f"Report complete for {active_run.get('profile_name')}, but no qualified leads were exported. "
+                            f"{detail} "
+                            "The downloaded CSV will only contain headers when no profiles pass the verified-plus-podcast filter."
+                        )
             elif status == "failed":
                 error_text = str(active_run.get("error_message") or "Unknown error")
                 error = f"Run failed: {_friendly_api_error_text(error_text)}"
@@ -2767,11 +2905,20 @@ def create_app() -> Flask:
             membership = request._ctx_membership
             if status == "success":
                 preview = _preview_from_run(run)
-                message = (
-                    f"Report complete for {profile['name']}. "
-                    f"Found {run.get('lead_count', 0)} leads. "
-                    "Use Report History to download CSV."
-                )
+                lead_count = int(run.get("lead_count") or 0)
+                if lead_count > 0:
+                    message = (
+                        f"Report complete for {profile['name']}. "
+                        f"Found {lead_count} leads. "
+                        "Use Report History to download CSV."
+                    )
+                else:
+                    detail = str(run.get("progress_message") or "Completed with 0 leads.")
+                    message = (
+                        f"Report complete for {profile['name']}, but no qualified leads were exported. "
+                        f"{detail} "
+                        "The downloaded CSV will only contain headers when no profiles pass the verified-plus-podcast filter."
+                    )
                 return _render_dashboard(
                     user=user,
                     workspace_id=workspace_id,
@@ -2827,7 +2974,8 @@ def create_app() -> Flask:
     @_require_auth
     def run_status(run_id: int):
         workspace_id = int(request._ctx_workspace_id)
-        advance = request.args.get("advance", "").strip() == "1"
+        advance_requested = request.args.get("advance", "").strip() == "1"
+        advance = advance_requested and (not _background_runner_enabled())
         try:
             run = process_run_step(run_id=run_id, output_dir=OUTPUT_DIR, workspace_id=workspace_id) if advance else get_run(run_id, workspace_id=workspace_id)
         except Exception as err:  # noqa: BLE001

@@ -932,6 +932,7 @@ def finish_run_success(
     output_filename: str,
     *,
     preview_json: str | None = None,
+    progress_message: str | None = None,
 ) -> None:
     with _connect() as conn:
         _execute(
@@ -941,7 +942,7 @@ def finish_run_success(
             SET
               status = 'success',
               phase = 'completed',
-              progress_message = 'Completed',
+              progress_message = ?,
               progress_current = CASE WHEN progress_total > 0 THEN progress_total ELSE progress_current END,
               lead_count = ?,
               output_filename = ?,
@@ -950,7 +951,14 @@ def finish_run_success(
               completed_at = ?
             WHERE id = ?
             """,
-            (lead_count, output_filename, preview_json, _utc_now_iso(), run_id),
+            (
+                (progress_message or "Completed")[:1000],
+                lead_count,
+                output_filename,
+                preview_json,
+                _utc_now_iso(),
+                run_id,
+            ),
         )
 
 
@@ -1107,6 +1115,55 @@ def list_runs(limit: int = 50, workspace_id: int | None = None) -> list[dict[str
             JOIN profiles ON profiles.id = runs.profile_id
             {where}
             ORDER BY runs.id DESC
+            LIMIT ?
+            """,
+            tuple(params),
+        ).fetchall()
+    return [_row_to_dict(row) for row in rows]
+
+
+def list_active_runs(limit: int = 20, workspace_id: int | None = None) -> list[dict[str, Any]]:
+    where_clauses = ["runs.status IN ('queued', 'running')"]
+    params: list[Any] = []
+    if workspace_id is not None:
+        where_clauses.append("runs.workspace_id = ?")
+        params.append(int(workspace_id))
+    params.append(max(1, int(limit)))
+    where_sql = " AND ".join(where_clauses)
+
+    with _connect() as conn:
+        rows = _execute(
+            conn,
+            f"""
+            SELECT
+              runs.id,
+              runs.workspace_id,
+              runs.profile_id,
+              profiles.name AS profile_name,
+              profiles.team_member_ids_json AS profile_team_member_ids_json,
+              runs.started_at,
+              runs.completed_at,
+              runs.status,
+              runs.phase,
+              runs.progress_message,
+              runs.progress_current,
+              runs.progress_total,
+              runs.media_limit,
+              runs.comments_per_media,
+              runs.lookback_days,
+              runs.max_profiles,
+              runs.lead_count,
+              runs.output_filename,
+              runs.error_message,
+              runs.state_json,
+              runs.preview_json,
+              runs.selected_media_ids_json
+            FROM runs
+            JOIN profiles ON profiles.id = runs.profile_id
+            WHERE {where_sql}
+            ORDER BY
+              CASE runs.status WHEN 'running' THEN 0 ELSE 1 END,
+              runs.id ASC
             LIMIT ?
             """,
             tuple(params),

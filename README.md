@@ -69,7 +69,9 @@ How it works:
    - choose specific posts/reels (manual selection scans all comments on selected posts), or
    - run by dropdown defaults (posts/comments caps).
 5. Click **Run Report Now**.
-6. Runs process in resumable background-safe steps with live status polling.
+6. Runs process in resumable steps.
+   - Default mode: dashboard polling advances the run (tab should stay open).
+   - Background mode: Vercel cron advances runs server-side (tab can close).
 7. Download current/old reports from **Report History**.
 
 Defaults can be saved per account (media limit, comments per media, lookback days).
@@ -186,7 +188,17 @@ For durable one-time setup + old report history on Vercel, set `DATABASE_URL` to
 #### Timeout-safe runner on Vercel
 
 Report execution is chunked into resumable steps, so large runs do not need to finish in one function invocation.  
-If a run is still in progress, keep the tab open; the dashboard updates progress in place and continues until complete.
+You can choose one of two run-advance modes:
+
+- `BACKGROUND_RUNNER_ENABLED=0` (default): browser polling advances runs. Keep the tab open while running.
+- `BACKGROUND_RUNNER_ENABLED=1`: `/internal/runner/tick` advances runs in the background, suitable for closing your laptop mid-run.
+
+For background mode on Vercel:
+
+1. Set `BACKGROUND_RUNNER_ENABLED=1`
+2. Set `CRON_SECRET` (or `RUNNER_SECRET`)
+3. Keep `vercel.json` cron enabled for `/internal/runner/tick`
+4. Redeploy
 
 ## Required environment variables
 
@@ -215,6 +227,10 @@ Optional:
 - `META_CONFIG_ID` (recommended for Facebook Login for Business)
 - `META_GRAPH_VERSION` (optional; defaults to IG graph version)
 - `META_OAUTH_SCOPES` (optional override when `META_CONFIG_ID` is not set)
+- `BACKGROUND_RUNNER_ENABLED` (default `0`) - set `1` to enable server-side tick runner
+- `BACKGROUND_RUNNER_MAX_RUNS` (default `2`) - max active runs processed per tick
+- `BACKGROUND_RUNNER_MAX_SECONDS` (default `20`) - per-tick processing cap
+- `CRON_SECRET` or `RUNNER_SECRET` (required when background runner is enabled)
 
 ### Enable AI enrichment in Vercel
 

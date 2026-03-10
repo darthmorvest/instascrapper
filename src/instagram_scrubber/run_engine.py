@@ -79,6 +79,15 @@ def _normalize_state(state: dict[str, Any]) -> dict[str, Any]:
     state.setdefault("user_cursor", 0)
     state.setdefault("records", [])
     state.setdefault("ai_cursor", 0)
+    raw_stats = state.get("stats")
+    if not isinstance(raw_stats, dict):
+        raw_stats = {}
+    raw_stats.setdefault("candidate_profiles_total", 0)
+    raw_stats.setdefault("qualified_leads", 0)
+    raw_stats.setdefault("discovery_unavailable", 0)
+    raw_stats.setdefault("not_verified", 0)
+    raw_stats.setdefault("missing_podcast", 0)
+    state["stats"] = raw_stats
     return state
 
 
@@ -185,6 +194,32 @@ def _state_record_to_lead(record: dict[str, Any]) -> LeadRecord:
     )
 
 
+def _completion_message(*, lead_count: int, state: dict[str, Any]) -> str:
+    stats = state.get("stats") if isinstance(state.get("stats"), dict) else {}
+    candidate_total = int(stats.get("candidate_profiles_total", 0) or 0)
+    discovery_unavailable = int(stats.get("discovery_unavailable", 0) or 0)
+    not_verified = int(stats.get("not_verified", 0) or 0)
+    missing_podcast = int(stats.get("missing_podcast", 0) or 0)
+
+    if lead_count > 0:
+        if candidate_total > 0:
+            return f"Completed - {lead_count} leads from {candidate_total} candidate profiles."
+        return f"Completed - {lead_count} leads."
+
+    parts = []
+    if candidate_total > 0:
+        parts.append(f"0 leads from {candidate_total} candidate profiles")
+    else:
+        parts.append("0 leads found")
+    if not_verified > 0:
+        parts.append(f"{not_verified} not verified")
+    if missing_podcast > 0:
+        parts.append(f"{missing_podcast} with no podcast detected")
+    if discovery_unavailable > 0:
+        parts.append(f"{discovery_unavailable} unavailable to profile discovery")
+    return "Completed - " + "; ".join(parts) + "."
+
+
 def _preview_rows(records: list[dict[str, Any]], limit: int = 25) -> list[dict[str, Any]]:
     preview: list[dict[str, Any]] = []
     for record in records[:limit]:
@@ -222,6 +257,7 @@ def _finalize_success(
         reverse=True,
     )
     lead_records = [_state_record_to_lead(item) for item in records]
+    completion_message = _completion_message(lead_count=len(lead_records), state=state)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"report_{_slug(str(run['profile_name']))}_{timestamp}.csv"
     csv_content = render_csv(lead_records)
@@ -237,6 +273,7 @@ def _finalize_success(
         lead_count=len(lead_records),
         output_filename=filename,
         preview_json=preview_json,
+        progress_message=completion_message,
     )
 
 
@@ -340,6 +377,7 @@ def process_run_step(
                         usernames = usernames[: int(run["max_profiles"])]
                     state["usernames"] = usernames
                     state["user_cursor"] = 0
+                    state["stats"]["candidate_profiles_total"] = len(usernames)
                     phase = "enrich_profiles"
                     update_run_progress(
                         run_id,
@@ -474,7 +512,19 @@ def process_run_step(
                     if sample:
                         canonical_username = str(sample.get("commenter_username") or username_key)
                         profile_data = enrich_profile(client, canonical_username)
-                        if profile_data.is_verified is True and profile_data.podcast_urls:
+                        if "business_discovery_unavailable_for_username" in profile_data.notes:
+                            state["stats"]["discovery_unavailable"] = int(
+                                state["stats"].get("discovery_unavailable", 0)
+                            ) + 1
+                        elif profile_data.is_verified is not True:
+                            state["stats"]["not_verified"] = int(
+                                state["stats"].get("not_verified", 0)
+                            ) + 1
+                        elif not profile_data.podcast_urls:
+                            state["stats"]["missing_podcast"] = int(
+                                state["stats"].get("missing_podcast", 0)
+                            ) + 1
+                        else:
                             estimate = estimate_monthly_listeners(profile_data)
                             notes = list(profile_data.notes)
                             notes.append(estimate.explanation)
@@ -513,6 +563,9 @@ def process_run_step(
                                     "biography": profile_data.biography,
                                 }
                             )
+                            state["stats"]["qualified_leads"] = int(
+                                state["stats"].get("qualified_leads", 0)
+                            ) + 1
 
                     cursor += 1
                     processed += 1

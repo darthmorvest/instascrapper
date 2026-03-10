@@ -6,6 +6,12 @@
       "use": "@vercel/python"
     }
   ],
+  "crons": [
+    {
+      "path": "/internal/runner/tick",
+      "schedule": "*/1 * * * *"
+    }
+  ],
   "routes": [
     {
       "src": "/(.*)",
