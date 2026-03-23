@@ -8,15 +8,21 @@ from .models import LeadRecord
 
 FIELDNAMES = [
     "instagram_handle",
+    "instagram_profile_url",
+    "bio_link",
     "followers_count",
     "comment_text",
+    "profile_lookup_status",
 ]
 
 def _record_to_row(rec: LeadRecord) -> dict[str, object]:
     return {
         "instagram_handle": rec.instagram_handle,
+        "instagram_profile_url": rec.instagram_profile_url,
+        "bio_link": rec.website or "",
         "followers_count": rec.followers_count or 0,
         "comment_text": rec.source_comment_text,
+        "profile_lookup_status": ";".join(rec.notes),
     }
 
 
