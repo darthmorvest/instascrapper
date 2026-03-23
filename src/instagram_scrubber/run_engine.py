@@ -83,7 +83,7 @@ def _normalize_state(state: dict[str, Any]) -> dict[str, Any]:
     raw_stats.setdefault("candidate_profiles_total", 0)
     raw_stats.setdefault("qualified_leads", 0)
     raw_stats.setdefault("discovery_unavailable", 0)
-    raw_stats.setdefault("missing_profile_link", 0)
+    raw_stats.setdefault("below_follower_threshold", 0)
     state["stats"] = raw_stats
     return state
 
@@ -146,31 +146,12 @@ def _is_better_candidate(candidate: dict[str, Any], existing: dict[str, Any]) ->
     return False
 
 
-def _compute_lead_score(
-    *,
-    estimated_monthly_listeners: int,
-    estimate_confidence: float,
-    engagement_comment_count: int,
-    ai_fit_score: int | None,
-) -> int:
-    normalized_listeners = min(100, int((estimated_monthly_listeners / 250_000) * 100))
-    normalized_confidence = int(max(0.0, min(estimate_confidence, 1.0)) * 100)
-    normalized_engagement = min(100, engagement_comment_count * 15)
-    ai_component = ai_fit_score if ai_fit_score is not None else 0
-    score = int(
-        normalized_listeners * 0.45
-        + normalized_confidence * 0.25
-        + normalized_engagement * 0.2
-        + ai_component * 0.1
-    )
-    return max(1, min(score, 100))
-
-
 def _state_record_to_lead(record: dict[str, Any]) -> LeadRecord:
     return LeadRecord(
         instagram_handle=str(record.get("instagram_handle", "")),
         instagram_profile_url=str(record.get("instagram_profile_url", "")),
         is_verified=record.get("is_verified"),
+        followers_count=record.get("followers_count"),
         podcast_urls=list(record.get("podcast_urls", [])),
         podcast_genre=record.get("podcast_genre"),
         estimated_monthly_listeners=int(record.get("estimated_monthly_listeners", 0)),
@@ -234,20 +215,26 @@ def _completion_message(*, lead_count: int, state: dict[str, Any]) -> str:
     stats = state.get("stats") if isinstance(state.get("stats"), dict) else {}
     candidate_total = int(stats.get("candidate_profiles_total", 0) or 0)
     discovery_unavailable = int(stats.get("discovery_unavailable", 0) or 0)
-    missing_profile_link = int(stats.get("missing_profile_link", 0) or 0)
+    below_follower_threshold = int(stats.get("below_follower_threshold", 0) or 0)
+    threshold = int(state.get("min_followers") or 15000)
 
     if lead_count > 0:
         if candidate_total > 0:
-            return f"Completed - {lead_count} commenters with profile links from {candidate_total} candidate profiles."
-        return f"Completed - {lead_count} commenters with profile links."
+            return (
+                f"Completed - {lead_count} commenters with at least "
+                f"{threshold:,} followers from {candidate_total} candidate profiles."
+            )
+        return f"Completed - {lead_count} commenters with at least {threshold:,} followers."
 
     parts = []
     if candidate_total > 0:
-        parts.append(f"0 commenters with profile links from {candidate_total} candidate profiles")
+        parts.append(
+            f"0 commenters with at least {threshold:,} followers from {candidate_total} candidate profiles"
+        )
     else:
-        parts.append("0 commenters with profile links found")
-    if missing_profile_link > 0:
-        parts.append(f"{missing_profile_link} with no profile link")
+        parts.append(f"0 commenters with at least {threshold:,} followers found")
+    if below_follower_threshold > 0:
+        parts.append(f"{below_follower_threshold} below {threshold:,} followers")
     if discovery_unavailable > 0:
         parts.append(f"{discovery_unavailable} unavailable to profile discovery")
     return "Completed - " + "; ".join(parts) + "."
@@ -259,17 +246,8 @@ def _preview_rows(records: list[dict[str, Any]], limit: int = 25) -> list[dict[s
         preview.append(
             {
                 "instagram_handle": record.get("instagram_handle"),
-                "podcast_urls": record.get("podcast_urls", []),
-                "podcast_genre": record.get("podcast_genre"),
-                "estimated_monthly_listeners": record.get("estimated_monthly_listeners"),
-                "estimate_confidence": record.get("estimate_confidence"),
-                "lead_score": record.get("lead_score"),
-                "engagement_comment_count": record.get("engagement_comment_count"),
-                "ai_fit_score": record.get("ai_fit_score"),
-                "ai_summary": record.get("ai_summary"),
-                "ai_outreach_angle": record.get("ai_outreach_angle"),
-                "email": record.get("email"),
-                "website": record.get("website"),
+                "followers_count": record.get("followers_count"),
+                "comment_text": record.get("source_comment_text"),
             }
         )
     return preview
@@ -345,6 +323,7 @@ def process_run_step(
         client = InstagramGraphClient(settings)
 
         state = _normalize_state(_load_state(run.get("state_json")))
+        state["min_followers"] = _env_int("MIN_COMMENTER_FOLLOWERS", 15000)
         phase = str(run.get("phase") or "queued")
         media_batch = max(1, _env_int("RUN_MEDIA_BATCH_SIZE", 2))
         profile_batch = max(1, _env_int("RUN_PROFILE_BATCH_SIZE", 3))
@@ -413,7 +392,7 @@ def process_run_step(
                     update_run_progress(
                         run_id,
                         phase=phase,
-                        progress_message="Checking commenter profiles for bio links",
+                        progress_message=f"Checking commenter profiles for {state['min_followers']:,}+ followers",
                         progress_current=0,
                         progress_total=max(len(usernames), 1),
                         state_json=_serialize_state(state),
@@ -533,6 +512,7 @@ def process_run_step(
                     continue
 
                 processed = 0
+                min_followers = int(state.get("min_followers") or 15000)
                 while cursor < total and processed < profile_batch:
                     username_key = usernames[cursor]
                     sample = state["user_best"].get(username_key)
@@ -543,9 +523,9 @@ def process_run_step(
                             state["stats"]["discovery_unavailable"] = int(
                                 state["stats"].get("discovery_unavailable", 0)
                             ) + 1
-                        elif not (profile_data.website or "").strip():
-                            state["stats"]["missing_profile_link"] = int(
-                                state["stats"].get("missing_profile_link", 0)
+                        elif int(profile_data.followers_count or 0) < min_followers:
+                            state["stats"]["below_follower_threshold"] = int(
+                                state["stats"].get("below_follower_threshold", 0)
                             ) + 1
                         else:
                             _append_candidate_record(
@@ -553,7 +533,7 @@ def process_run_step(
                                 sample=sample,
                                 canonical_username=canonical_username,
                                 profile_data=profile_data,
-                                notes=[*profile_data.notes, "profile_link_present"],
+                                notes=[*profile_data.notes, f"follower_threshold_met>={min_followers}"],
                             )
 
                     cursor += 1
@@ -565,7 +545,10 @@ def process_run_step(
                 update_run_progress(
                     run_id,
                     phase=phase,
-                    progress_message=f"Checked {cursor} of {total} commenter profiles for bio links",
+                    progress_message=(
+                        f"Checked {cursor} of {total} commenter profiles for "
+                        f"{min_followers:,}+ followers"
+                    ),
                     progress_current=cursor,
                     progress_total=max(total, 1),
                     state_json=_serialize_state(state),

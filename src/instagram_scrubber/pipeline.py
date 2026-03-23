@@ -23,6 +23,7 @@ def build_leads(
     lookback_days: int | None,
     max_profiles: int | None = None,
 ) -> list[LeadRecord]:
+    min_followers = 15000
     interactions = client.collect_comment_interactions(
         media_limit=media_limit,
         comments_per_media=comments_per_media,
@@ -44,7 +45,7 @@ def build_leads(
         profile = enrich_profile(client, canonical_username)
         if "business_discovery_unavailable_for_username" in profile.notes:
             continue
-        if not (profile.website or "").strip():
+        if int(profile.followers_count or 0) < min_followers:
             continue
 
         records.append(
@@ -52,6 +53,7 @@ def build_leads(
                 instagram_handle=canonical_username,
                 instagram_profile_url=f"https://instagram.com/{canonical_username}",
                 is_verified=profile.is_verified,
+                followers_count=profile.followers_count,
                 podcast_urls=profile.podcast_urls,
                 podcast_genre=profile.podcast_genre,
                 estimated_monthly_listeners=0,
@@ -63,8 +65,8 @@ def build_leads(
                 source_comment_id=sample_interaction.comment_id,
                 source_comment_text=sample_interaction.comment_text,
                 source_comment_timestamp=sample_interaction.comment_timestamp,
-                notes=[*profile.notes, "profile_link_present"],
+                notes=[*profile.notes, f"follower_threshold_met>={min_followers}"],
             )
         )
 
-    return sorted(records, key=lambda x: (x.website or "", x.instagram_handle), reverse=True)
+    return sorted(records, key=lambda x: (x.followers_count or 0, x.instagram_handle), reverse=True)

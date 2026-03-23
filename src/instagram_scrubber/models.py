@@ -45,6 +45,7 @@ class LeadRecord:
     instagram_handle: str
     instagram_profile_url: str
     is_verified: bool | None
+    followers_count: int | None
     podcast_urls: list[str]
     podcast_genre: str | None
     estimated_monthly_listeners: int
