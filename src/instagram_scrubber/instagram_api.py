@@ -48,7 +48,7 @@ class InstagramGraphClient:
             except Exception as err:  # noqa: BLE001
                 last_error = err
                 if attempt < self.settings.retry_count:
-                    sleep_for = self.settings.retry_backoff_seconds * (attempt + 1)
+                    sleep_for = self.settings.retry_backoff_seconds * (2 ** attempt)
                     time.sleep(sleep_for)
                     continue
                 break
@@ -81,7 +81,7 @@ class InstagramGraphClient:
             except Exception as err:  # noqa: BLE001
                 last_error = err
                 if attempt < self.settings.retry_count:
-                    sleep_for = self.settings.retry_backoff_seconds * (attempt + 1)
+                    sleep_for = self.settings.retry_backoff_seconds * (2 ** attempt)
                     time.sleep(sleep_for)
                     continue
                 break

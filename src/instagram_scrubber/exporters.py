@@ -8,51 +8,15 @@ from .models import LeadRecord
 
 FIELDNAMES = [
     "instagram_handle",
-    "instagram_profile_url",
-    "is_verified",
-    "podcast_urls",
-    "podcast_genre",
-    "estimated_monthly_listeners",
-    "estimate_confidence",
-    "lead_score",
-    "engagement_comment_count",
-    "ai_fit_score",
-    "ai_summary",
-    "ai_outreach_angle",
-    "email",
-    "website",
-    "source_media_permalink",
-    "source_media_share_count",
-    "source_comment_id",
-    "source_comment_text",
-    "source_comment_timestamp",
-    "notes",
+    "bio_link",
+    "comment_text",
 ]
 
 def _record_to_row(rec: LeadRecord) -> dict[str, object]:
     return {
         "instagram_handle": rec.instagram_handle,
-        "instagram_profile_url": rec.instagram_profile_url,
-        "is_verified": rec.is_verified,
-        "podcast_urls": ";".join(rec.podcast_urls),
-        "podcast_genre": rec.podcast_genre or "",
-        "estimated_monthly_listeners": rec.estimated_monthly_listeners,
-        "estimate_confidence": rec.estimate_confidence,
-        "lead_score": rec.lead_score,
-        "engagement_comment_count": rec.engagement_comment_count,
-        "ai_fit_score": rec.ai_fit_score,
-        "ai_summary": rec.ai_summary or "",
-        "ai_outreach_angle": rec.ai_outreach_angle or "",
-        "email": rec.email or "",
-        "website": rec.website or "",
-        "source_media_permalink": rec.source_media_permalink or "",
-        "source_media_share_count": rec.source_media_share_count,
-        "source_comment_id": rec.source_comment_id,
-        "source_comment_text": rec.source_comment_text,
-        "source_comment_timestamp": rec.source_comment_timestamp.isoformat()
-        if rec.source_comment_timestamp
-        else "",
-        "notes": ";".join(rec.notes),
+        "bio_link": rec.website or "",
+        "comment_text": rec.source_comment_text,
     }
 
 

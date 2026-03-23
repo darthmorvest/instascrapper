@@ -23,6 +23,7 @@ from .run_engine import process_run_step
 from .storage import (
     accept_workspace_invite,
     add_workspace_member,
+    cleanup_stale_state_json,
     count_users,
     create_profile,
     create_run,
@@ -33,6 +34,7 @@ from .storage import (
     get_profile,
     get_report_file,
     get_run,
+    get_run_status,
     get_run_by_output_filename,
     get_user,
     get_user_by_email,
@@ -2013,6 +2015,7 @@ def create_app() -> Flask:
     )
 
     init_db()
+    cleanup_stale_state_json()
     legal_contact_email = os.getenv("LEGAL_CONTACT_EMAIL", "privacy@instascrapper.com").strip() or "privacy@instascrapper.com"
     legal_effective_date = os.getenv("LEGAL_EFFECTIVE_DATE", "March 3, 2026").strip() or "March 3, 2026"
 
@@ -2977,9 +2980,13 @@ def create_app() -> Flask:
         advance_requested = request.args.get("advance", "").strip() == "1"
         advance = advance_requested and (not _background_runner_enabled())
         try:
-            run = process_run_step(run_id=run_id, output_dir=OUTPUT_DIR, workspace_id=workspace_id) if advance else get_run(run_id, workspace_id=workspace_id)
+            run = (
+                process_run_step(run_id=run_id, output_dir=OUTPUT_DIR, workspace_id=workspace_id)
+                if advance
+                else get_run_status(run_id, workspace_id=workspace_id)
+            )
         except Exception as err:  # noqa: BLE001
-            fallback = get_run(run_id, workspace_id=workspace_id)
+            fallback = get_run_status(run_id, workspace_id=workspace_id)
             if fallback is None:
                 return jsonify({"error": str(err)}), 500
             run = fallback

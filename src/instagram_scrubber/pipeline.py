@@ -2,8 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from .enrichment import enrich_profile, profile_has_podcast_signal
-from .estimation import estimate_monthly_listeners
+from .enrichment import enrich_profile
 from .instagram_api import InstagramGraphClient
 from .models import CommentInteraction, LeadRecord
 
@@ -43,14 +42,10 @@ def build_leads(
         canonical_username = sample_interaction.commenter_username
 
         profile = enrich_profile(client, canonical_username)
-        if profile.is_verified is not True:
+        if "business_discovery_unavailable_for_username" in profile.notes:
             continue
-        if not profile_has_podcast_signal(profile):
+        if not (profile.website or "").strip():
             continue
-
-        estimate = estimate_monthly_listeners(profile)
-        notes = list(profile.notes)
-        notes.append(estimate.explanation)
 
         records.append(
             LeadRecord(
@@ -59,8 +54,8 @@ def build_leads(
                 is_verified=profile.is_verified,
                 podcast_urls=profile.podcast_urls,
                 podcast_genre=profile.podcast_genre,
-                estimated_monthly_listeners=estimate.monthly_listeners,
-                estimate_confidence=estimate.confidence,
+                estimated_monthly_listeners=0,
+                estimate_confidence=0.0,
                 email=profile.email,
                 website=profile.website,
                 source_media_permalink=sample_interaction.media_permalink,
@@ -68,8 +63,8 @@ def build_leads(
                 source_comment_id=sample_interaction.comment_id,
                 source_comment_text=sample_interaction.comment_text,
                 source_comment_timestamp=sample_interaction.comment_timestamp,
-                notes=notes,
+                notes=[*profile.notes, "profile_link_present"],
             )
         )
 
-    return sorted(records, key=lambda x: x.estimated_monthly_listeners, reverse=True)
+    return sorted(records, key=lambda x: (x.website or "", x.instagram_handle), reverse=True)

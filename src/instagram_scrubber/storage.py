@@ -874,6 +874,50 @@ def get_run(run_id: int, workspace_id: int | None = None) -> dict[str, Any] | No
     return _row_to_dict(row)
 
 
+def get_run_status(run_id: int, workspace_id: int | None = None) -> dict[str, Any] | None:
+    where_workspace = ""
+    params: list[Any] = [run_id]
+    if workspace_id is not None:
+        where_workspace = "AND runs.workspace_id = ?"
+        params.append(int(workspace_id))
+
+    with _connect() as conn:
+        row = _execute(
+            conn,
+            f"""
+            SELECT
+              runs.id,
+              runs.workspace_id,
+              runs.profile_id,
+              profiles.name AS profile_name,
+              profiles.team_member_ids_json AS profile_team_member_ids_json,
+              runs.started_at,
+              runs.completed_at,
+              runs.status,
+              runs.phase,
+              runs.progress_message,
+              runs.progress_current,
+              runs.progress_total,
+              runs.media_limit,
+              runs.comments_per_media,
+              runs.lookback_days,
+              runs.max_profiles,
+              runs.lead_count,
+              runs.output_filename,
+              runs.error_message,
+              runs.selected_media_ids_json
+            FROM runs
+            JOIN profiles ON profiles.id = runs.profile_id
+            WHERE runs.id = ?
+            {where_workspace}
+            """,
+            tuple(params),
+        ).fetchone()
+    if row is None:
+        return None
+    return _row_to_dict(row)
+
+
 def update_run_progress(
     run_id: int,
     *,
@@ -981,6 +1025,19 @@ def finish_run_failure(run_id: int, error_message: str) -> None:
         )
 
 
+def cleanup_stale_state_json() -> None:
+    with _connect() as conn:
+        _execute(
+            conn,
+            """
+            UPDATE runs
+            SET state_json = '{}'
+            WHERE status IN ('success', 'failed')
+              AND state_json != '{}'
+            """,
+        )
+
+
 def save_report_file(*, run_id: int, output_filename: str, csv_content: str) -> None:
     created_at = _utc_now_iso()
     with _connect() as conn:
@@ -1060,8 +1117,6 @@ def get_run_by_output_filename(
               runs.lead_count,
               runs.output_filename,
               runs.error_message,
-              runs.state_json,
-              runs.preview_json,
               runs.selected_media_ids_json
             FROM runs
             JOIN profiles ON profiles.id = runs.profile_id
@@ -1108,8 +1163,6 @@ def list_runs(limit: int = 50, workspace_id: int | None = None) -> list[dict[str
               runs.lead_count,
               runs.output_filename,
               runs.error_message,
-              runs.state_json,
-              runs.preview_json,
               runs.selected_media_ids_json
             FROM runs
             JOIN profiles ON profiles.id = runs.profile_id
@@ -1155,8 +1208,6 @@ def list_active_runs(limit: int = 20, workspace_id: int | None = None) -> list[d
               runs.lead_count,
               runs.output_filename,
               runs.error_message,
-              runs.state_json,
-              runs.preview_json,
               runs.selected_media_ids_json
             FROM runs
             JOIN profiles ON profiles.id = runs.profile_id

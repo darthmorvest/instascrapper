@@ -8,10 +8,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from .ai_enrichment import ai_enabled, enrich_leads_with_ai
 from .config import build_settings
-from .enrichment import enrich_profile, profile_has_podcast_signal
-from .estimation import estimate_monthly_listeners
+from .enrichment import enrich_profile
 from .exporters import render_csv, write_csv_content
 from .instagram_api import InstagramGraphClient
 from .models import LeadRecord
@@ -85,8 +83,7 @@ def _normalize_state(state: dict[str, Any]) -> dict[str, Any]:
     raw_stats.setdefault("candidate_profiles_total", 0)
     raw_stats.setdefault("qualified_leads", 0)
     raw_stats.setdefault("discovery_unavailable", 0)
-    raw_stats.setdefault("not_verified", 0)
-    raw_stats.setdefault("missing_podcast", 0)
+    raw_stats.setdefault("missing_profile_link", 0)
     state["stats"] = raw_stats
     return state
 
@@ -194,27 +191,63 @@ def _state_record_to_lead(record: dict[str, Any]) -> LeadRecord:
     )
 
 
+def _append_candidate_record(
+    *,
+    state: dict[str, Any],
+    sample: dict[str, Any],
+    canonical_username: str,
+    profile_data: Any | None,
+    notes: list[str],
+) -> None:
+    state["records"].append(
+        {
+            "instagram_handle": canonical_username,
+            "instagram_profile_url": f"https://instagram.com/{canonical_username}",
+            "is_verified": getattr(profile_data, "is_verified", None),
+            "podcast_urls": list(getattr(profile_data, "podcast_urls", []) or []),
+            "podcast_genre": getattr(profile_data, "podcast_genre", None),
+            "estimated_monthly_listeners": 0,
+            "estimate_confidence": 0.0,
+            "email": getattr(profile_data, "email", None),
+            "website": getattr(profile_data, "website", None),
+            "source_media_permalink": sample.get("media_permalink"),
+            "source_media_share_count": sample.get("media_share_count"),
+            "source_comment_id": sample.get("comment_id"),
+            "source_comment_text": sample.get("comment_text"),
+            "source_comment_timestamp": sample.get("comment_timestamp"),
+            "notes": list(notes),
+            "engagement_comment_count": int(sample.get("engagement_comment_count", 1)),
+            "lead_score": None,
+            "ai_fit_score": None,
+            "ai_summary": None,
+            "ai_outreach_angle": None,
+            "followers_count": getattr(profile_data, "followers_count", None),
+            "biography": getattr(profile_data, "biography", None),
+        }
+    )
+    state["stats"]["qualified_leads"] = int(
+        state["stats"].get("qualified_leads", 0)
+    ) + 1
+
+
 def _completion_message(*, lead_count: int, state: dict[str, Any]) -> str:
     stats = state.get("stats") if isinstance(state.get("stats"), dict) else {}
     candidate_total = int(stats.get("candidate_profiles_total", 0) or 0)
     discovery_unavailable = int(stats.get("discovery_unavailable", 0) or 0)
-    not_verified = int(stats.get("not_verified", 0) or 0)
-    missing_podcast = int(stats.get("missing_podcast", 0) or 0)
+    missing_profile_link = int(stats.get("missing_profile_link", 0) or 0)
 
     if lead_count > 0:
         if candidate_total > 0:
-            return f"Completed - {lead_count} leads from {candidate_total} candidate profiles."
-        return f"Completed - {lead_count} leads."
+            return f"Completed - {lead_count} commenters with profile links from {candidate_total} candidate profiles."
+        return f"Completed - {lead_count} commenters with profile links."
 
     parts = []
     if candidate_total > 0:
-        parts.append(f"0 leads from {candidate_total} candidate profiles")
+        parts.append(f"0 commenters with profile links from {candidate_total} candidate profiles")
     else:
-        parts.append("0 leads found")
-    if not_verified > 0:
-        parts.append(f"{not_verified} not verified")
-    if missing_podcast > 0:
-        parts.append(f"{missing_podcast} with no podcast detected")
+        parts.append("0 commenters with profile links found")
+    if missing_profile_link > 0:
+        parts.append(f"{missing_profile_link} with no profile link")
     if discovery_unavailable > 0:
         parts.append(f"{discovery_unavailable} unavailable to profile discovery")
     return "Completed - " + "; ".join(parts) + "."
@@ -315,8 +348,6 @@ def process_run_step(
         phase = str(run.get("phase") or "queued")
         media_batch = max(1, _env_int("RUN_MEDIA_BATCH_SIZE", 2))
         profile_batch = max(1, _env_int("RUN_PROFILE_BATCH_SIZE", 3))
-        ai_batch = max(1, _env_int("RUN_AI_BATCH_SIZE", 5))
-
         update_run_progress(run_id, status="running")
 
         while time.monotonic() - start < budget:
@@ -382,7 +413,7 @@ def process_run_step(
                     update_run_progress(
                         run_id,
                         phase=phase,
-                        progress_message="Enriching verified podcast profiles",
+                        progress_message="Checking commenter profiles for bio links",
                         progress_current=0,
                         progress_total=max(len(usernames), 1),
                         state_json=_serialize_state(state),
@@ -396,7 +427,8 @@ def process_run_step(
                     if not active_media:
                         media_item = media[cursor]
                         media_id = str(media_item.get("media_id", ""))
-                        share_count = client.get_media_share_count(media_id) if media_id else None
+                        fetch_shares = os.getenv("FETCH_SHARE_COUNTS", "0") == "1"
+                        share_count = client.get_media_share_count(media_id) if (media_id and fetch_shares) else None
                         active_media = {
                             "media_id": media_id,
                             "permalink": media_item.get("permalink"),
@@ -489,16 +521,11 @@ def process_run_step(
                 cursor = int(state.get("user_cursor", 0))
                 total = len(usernames)
                 if cursor >= total:
-                    phase = "ai_enrichment" if ai_enabled() and state.get("records") else "finalize"
-                    state["ai_cursor"] = int(state.get("ai_cursor", 0))
+                    phase = "finalize"
                     update_run_progress(
                         run_id,
                         phase=phase,
-                        progress_message=(
-                            "Applying AI enrichment"
-                            if phase == "ai_enrichment"
-                            else "Finalizing report"
-                        ),
+                        progress_message="Finalizing report",
                         progress_current=0,
                         progress_total=max(len(state.get("records", [])), 1),
                         state_json=_serialize_state(state),
@@ -516,56 +543,18 @@ def process_run_step(
                             state["stats"]["discovery_unavailable"] = int(
                                 state["stats"].get("discovery_unavailable", 0)
                             ) + 1
-                        elif profile_data.is_verified is not True:
-                            state["stats"]["not_verified"] = int(
-                                state["stats"].get("not_verified", 0)
-                            ) + 1
-                        elif not profile_has_podcast_signal(profile_data):
-                            state["stats"]["missing_podcast"] = int(
-                                state["stats"].get("missing_podcast", 0)
+                        elif not (profile_data.website or "").strip():
+                            state["stats"]["missing_profile_link"] = int(
+                                state["stats"].get("missing_profile_link", 0)
                             ) + 1
                         else:
-                            estimate = estimate_monthly_listeners(profile_data)
-                            notes = list(profile_data.notes)
-                            notes.append(estimate.explanation)
-
-                            engagement_comment_count = int(sample.get("engagement_comment_count", 1))
-                            lead_score = _compute_lead_score(
-                                estimated_monthly_listeners=estimate.monthly_listeners,
-                                estimate_confidence=estimate.confidence,
-                                engagement_comment_count=engagement_comment_count,
-                                ai_fit_score=None,
+                            _append_candidate_record(
+                                state=state,
+                                sample=sample,
+                                canonical_username=canonical_username,
+                                profile_data=profile_data,
+                                notes=[*profile_data.notes, "profile_link_present"],
                             )
-
-                            state["records"].append(
-                                {
-                                    "instagram_handle": canonical_username,
-                                    "instagram_profile_url": f"https://instagram.com/{canonical_username}",
-                                    "is_verified": profile_data.is_verified,
-                                    "podcast_urls": profile_data.podcast_urls,
-                                    "podcast_genre": profile_data.podcast_genre,
-                                    "estimated_monthly_listeners": estimate.monthly_listeners,
-                                    "estimate_confidence": estimate.confidence,
-                                    "email": profile_data.email,
-                                    "website": profile_data.website,
-                                    "source_media_permalink": sample.get("media_permalink"),
-                                    "source_media_share_count": sample.get("media_share_count"),
-                                    "source_comment_id": sample.get("comment_id"),
-                                    "source_comment_text": sample.get("comment_text"),
-                                    "source_comment_timestamp": sample.get("comment_timestamp"),
-                                    "notes": notes,
-                                    "engagement_comment_count": engagement_comment_count,
-                                    "lead_score": lead_score,
-                                    "ai_fit_score": None,
-                                    "ai_summary": None,
-                                    "ai_outreach_angle": None,
-                                    "followers_count": profile_data.followers_count,
-                                    "biography": profile_data.biography,
-                                }
-                            )
-                            state["stats"]["qualified_leads"] = int(
-                                state["stats"].get("qualified_leads", 0)
-                            ) + 1
 
                     cursor += 1
                     processed += 1
@@ -576,64 +565,7 @@ def process_run_step(
                 update_run_progress(
                     run_id,
                     phase=phase,
-                    progress_message=f"Enriched {cursor} of {total} candidate profiles",
-                    progress_current=cursor,
-                    progress_total=max(total, 1),
-                    state_json=_serialize_state(state),
-                )
-                break
-
-            if phase == "ai_enrichment":
-                records = list(state.get("records", []))
-                cursor = int(state.get("ai_cursor", 0))
-                total = len(records)
-                if cursor >= total:
-                    phase = "finalize"
-                    update_run_progress(
-                        run_id,
-                        phase=phase,
-                        progress_message="Finalizing report",
-                        progress_current=total,
-                        progress_total=max(total, 1),
-                        state_json=_serialize_state(state),
-                    )
-                    continue
-
-                chunk = records[cursor: cursor + ai_batch]
-                mapped, ai_notes = enrich_leads_with_ai(
-                    leads=chunk,
-                    timeout_seconds=max(10, int(profile["timeout_seconds"])),
-                )
-                for lead in chunk:
-                    handle = str(lead.get("instagram_handle", "")).lower()
-                    ai_data = mapped.get(handle)
-                    if not ai_data:
-                        continue
-                    lead["ai_fit_score"] = ai_data.get("ai_fit_score")
-                    if ai_data.get("podcast_genre"):
-                        lead["podcast_genre"] = ai_data.get("podcast_genre")
-                    lead["ai_summary"] = ai_data.get("ai_summary")
-                    lead["ai_outreach_angle"] = ai_data.get("ai_outreach_angle")
-                    lead["lead_score"] = _compute_lead_score(
-                        estimated_monthly_listeners=int(lead.get("estimated_monthly_listeners", 0)),
-                        estimate_confidence=float(lead.get("estimate_confidence", 0)),
-                        engagement_comment_count=int(lead.get("engagement_comment_count", 1)),
-                        ai_fit_score=lead.get("ai_fit_score"),
-                    )
-
-                if ai_notes:
-                    for lead in chunk:
-                        notes = list(lead.get("notes") or [])
-                        notes.extend(ai_notes)
-                        lead["notes"] = notes
-
-                cursor += len(chunk)
-                state["ai_cursor"] = cursor
-                state["records"] = records
-                update_run_progress(
-                    run_id,
-                    phase=phase,
-                    progress_message=f"AI-enriched {cursor} of {total} qualified leads",
+                    progress_message=f"Checked {cursor} of {total} commenter profiles for bio links",
                     progress_current=cursor,
                     progress_total=max(total, 1),
                     state_json=_serialize_state(state),
